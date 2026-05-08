@@ -45,6 +45,33 @@ function GameState.Update(dt, inputX, inputY)
         Player.Update(dt, inputX, inputY)
         Particle.Update(dt)
 
+        -- 经验球自动吸向玩家
+        local attractSpeed = 300
+        for i = #GameState.xpGems, 1, -1 do
+            local g = GameState.xpGems[i]
+            if g.alive then
+                local dx = Player.x - g.x
+                local dy = Player.y - g.y
+                local dist = math.sqrt(dx * dx + dy * dy)
+                if dist < Config.XP_GEM_RADIUS + Player.radius then
+                    -- 拾取
+                    g.alive = false
+                    Particle.SpawnXPSparkle(g.x, g.y)
+                    local leveledUp = Player.AddXP(g.value)
+                    if leveledUp then
+                        GameState.state = "levelup"
+                        GameState.pendingLevelUp = true
+                    end
+                    table.remove(GameState.xpGems, i)
+                else
+                    -- 向玩家移动
+                    local spd = attractSpeed * dt / dist
+                    g.x = g.x + dx * spd
+                    g.y = g.y + dy * spd
+                end
+            end
+        end
+
         -- 更新门旋转
         for _, door in ipairs(GameState.doors) do
             door.rotation = door.rotation + Config.DOOR.rotateSpeed * dt
@@ -198,13 +225,13 @@ function GameState.Update(dt, inputX, inputY)
     -- 13. 更新粒子
     Particle.Update(dt)
 
-    -- 14. 检查房间通关（所有波次完成 + 无存活敌人 + 无宝石）
+    -- 14. 检查房间通关（所有波次完成 + 无存活敌人）
     if EnemySpawner.IsAllDone() then
         local alive = 0
         for _, e in ipairs(EnemySpawner.enemies) do
             if e.alive then alive = alive + 1 end
         end
-        if alive == 0 and #GameState.xpGems == 0 then
+        if alive == 0 then
             GameState._OnRoomCleared()
         end
     end
@@ -291,19 +318,30 @@ end
 -- DEBUG
 -- ============================================================================
 
---- DEBUG: 立即通关当前房间（杀死所有敌人+清空宝石）
+--- DEBUG: 立即通关当前房间（杀死所有敌人 → 自然进入通关状态）
 function GameState.DebugClearRoom()
     if GameState.state ~= "playing" then return end
     print("[GameState] DEBUG: Clearing room!")
+
+    -- 杀死所有存活敌人（触发掉落经验球）
     for _, e in ipairs(EnemySpawner.enemies) do
         if e.alive then
             e.alive = false
             GameState._OnEnemyKilled(e)
         end
     end
-    -- 强制完成所有波次
+
+    -- 强制完成所有波次（设为最后一波 + done）
+    EnemySpawner.waveIndex = #Config.WAVES
     EnemySpawner.waveState = "done"
     EnemySpawner.spawnQueue = {}
+    EnemySpawner.warnings = {}
+
+    -- 清除敌人子弹
+    GameState.enemyBullets = {}
+
+    -- 直接进入通关状态（生成门 + 经验球将自动吸附）
+    GameState._OnRoomCleared()
 end
 
 -- ============================================================================
