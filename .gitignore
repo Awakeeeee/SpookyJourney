@@ -1,0 +1,26 @@
+# 引擎内部目录（只读，非用户代码）
+engine-docs/
+examples/
+templates/
+urhox-libs/
+schemas/
+prompts/
+lua-tools/
+.emmylua/
+.claude/
+.agent/
+.cli/
+
+# 构建与临时文件
+dist/
+.build/
+.tmp/
+.project/
+logs/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# CLAUDE.md 入口指南
+CLAUDE.md
