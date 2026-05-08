@@ -107,45 +107,93 @@ function Enemy:Update(dt, targetX, targetY)
 end
 
 -- ============================================================================
--- mob_common: 靠近玩家 → 在 stopRadius 处环绕
+-- mob_common: chase → orbit → lunge_forward → lunge_back → orbit
 -- ============================================================================
 function Enemy:_UpdateCommon(dt, targetX, targetY)
     local ai = Config.ENEMY_AI.mob_common
     local dx = targetX - self.x
     local dy = targetY - self.y
     local dist = math.sqrt(dx * dx + dy * dy)
-    local stopDist = Config.PLAYER_RADIUS + self.radius + ai.stopRadius
+    local orbitDist = Config.PLAYER_RADIUS + self.radius + ai.orbitRadius
 
-    if dist > stopDist then
-        -- 追逐
-        self.x = self.x + (dx / dist) * self.speed * dt
-        self.y = self.y + (dy / dist) * self.speed * dt
-    else
-        -- 围绕：沿切线方向缓慢绕圈
-        local tangentX = -dy / dist
-        local tangentY = dx / dist
-        self.x = self.x + tangentX * self.speed * 0.5 * dt
-        self.y = self.y + tangentY * self.speed * 0.5 * dt
+    if self.aiState == "chase" then
+        -- 追逐至轨道距离
+        if dist > orbitDist then
+            self.x = self.x + (dx / dist) * self.speed * dt
+            self.y = self.y + (dy / dist) * self.speed * dt
+        else
+            self.aiState = "orbit"
+            self.attackTimer = ai.attackInterval * (0.5 + math.random() * 0.5)
+        end
+
+    elseif self.aiState == "orbit" then
+        -- 环绕玩家，保持 orbitDist 距离
+        if dist > 1 then
+            local tangentX = -dy / dist
+            local tangentY = dx / dist
+            self.x = self.x + tangentX * self.speed * 0.5 * dt
+            self.y = self.y + tangentY * self.speed * 0.5 * dt
+            -- 维持距离（轻微推拉）
+            local drift = dist - orbitDist
+            self.x = self.x + (dx / dist) * drift * 2.0 * dt
+            self.y = self.y + (dy / dist) * drift * 2.0 * dt
+        end
+        -- 攻击计时
+        self.attackTimer = self.attackTimer - dt
+        if self.attackTimer <= 0 then
+            -- 开始冲顶：记录出发点，冲向玩家
+            self.lungeOriginX = self.x
+            self.lungeOriginY = self.y
+            self.aiState = "lunge_forward"
+            self.aiTimer = ai.lungeDuration
+            self.lungeHit = false  -- 本次冲顶是否已命中
+        end
+
+    elseif self.aiState == "lunge_forward" then
+        -- 冲向玩家
+        if dist > 1 then
+            self.x = self.x + (dx / dist) * ai.lungeSpeed * dt
+            self.y = self.y + (dy / dist) * ai.lungeSpeed * dt
+        end
+        self.aiTimer = self.aiTimer - dt
+        -- 检测是否接触玩家
+        local touchDist = Config.PLAYER_RADIUS + self.radius
+        if dist <= touchDist and not self.lungeHit then
+            self.lungeHit = true
+        end
+        if self.aiTimer <= 0 then
+            self.aiState = "lunge_back"
+            self.aiTimer = ai.lungeDuration
+        end
+
+    elseif self.aiState == "lunge_back" then
+        -- 回到出发点
+        local bx = self.lungeOriginX - self.x
+        local by = self.lungeOriginY - self.y
+        local bdist = math.sqrt(bx * bx + by * by)
+        if bdist > 2 then
+            self.x = self.x + (bx / bdist) * ai.lungeSpeed * dt
+            self.y = self.y + (by / bdist) * ai.lungeSpeed * dt
+        end
+        self.aiTimer = self.aiTimer - dt
+        if self.aiTimer <= 0 then
+            self.aiState = "orbit"
+            self.attackTimer = ai.attackInterval
+        end
     end
-    -- 攻击计时（由 GameState 检测碰撞）
-    self.attackTimer = self.attackTimer - dt
+
+    -- 返回近战命中信息
+    if self.lungeHit then
+        self.lungeHit = false
+        return { melee = true, damage = self.damage }
+    end
     return nil
 end
 
---- 检查近战攻击是否就绪（由 GameState 调用）
----@return boolean
-function Enemy:CanMeleeAttack()
-    if self.aiType ~= "mob_common" then return false end
-    local ai = Config.ENEMY_AI.mob_common
-    if self.attackTimer <= 0 then
-        self.attackTimer = ai.attackInterval
-        return true
-    end
-    return false
-end
-
 -- ============================================================================
--- mob_shooter: 接近到 preferDist → 站定射击
+-- mob_shooter: dist > attackRange → 移动靠近
+--              fleeRange < dist < attackRange → 站定射击
+--              dist < fleeRange → 逃离
 -- ============================================================================
 function Enemy:_UpdateShooter(dt, targetX, targetY)
     local ai = Config.ENEMY_AI.mob_shooter
@@ -153,20 +201,29 @@ function Enemy:_UpdateShooter(dt, targetX, targetY)
     local dy = targetY - self.y
     local dist = math.sqrt(dx * dx + dy * dy)
 
-    -- 移动逻辑：太远靠近，太近后退，适中站定
-    if dist > ai.preferDist then
-        self.x = self.x + (dx / dist) * self.speed * dt
-        self.y = self.y + (dy / dist) * self.speed * dt
-    elseif dist < ai.minDist then
-        self.x = self.x - (dx / dist) * self.speed * 0.6 * dt
-        self.y = self.y - (dy / dist) * self.speed * 0.6 * dt
+    if dist > ai.attackRange then
+        -- 太远：靠近玩家
+        if dist > 1 then
+            self.x = self.x + (dx / dist) * self.speed * dt
+            self.y = self.y + (dy / dist) * self.speed * dt
+        end
+        -- 移动中不射击
+        return nil
+    elseif dist < ai.fleeRange then
+        -- 太近：逃离玩家
+        if dist > 1 then
+            local flee = self.speed * ai.fleeSpeed
+            self.x = self.x - (dx / dist) * flee * dt
+            self.y = self.y - (dy / dist) * flee * dt
+        end
+        -- 逃跑中不射击
+        return nil
     end
 
-    -- 射击计时
+    -- 在攻击范围内：站定射击
     self.attackTimer = self.attackTimer - dt
     if self.attackTimer <= 0 then
         self.attackTimer = ai.fireInterval
-        -- 从三角形顶点（面向方向）发射
         if dist > 1 then
             local ndx = dx / dist
             local ndy = dy / dist

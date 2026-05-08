@@ -150,18 +150,24 @@ end
 ---@param dt number
 ---@param targetX number 玩家x
 ---@param targetY number 玩家y
----@return table 敌人射击信息列表 {{x,y,vx,vy,damage,radius,lifetime}, ...}
+---@return table shots 敌人射击信息列表
+---@return table meleeHits 近战命中列表 {{damage=n}, ...}
 function EnemySpawner.UpdateEnemies(dt, targetX, targetY)
     local shots = {}
+    local meleeHits = {}
     for _, e in ipairs(EnemySpawner.enemies) do
         if e.alive then
-            local shot = e:Update(dt, targetX, targetY)
-            if shot then
-                table.insert(shots, shot)
+            local result = e:Update(dt, targetX, targetY)
+            if result then
+                if result.melee then
+                    table.insert(meleeHits, result)
+                else
+                    table.insert(shots, result)
+                end
             end
         end
     end
-    return shots
+    return shots, meleeHits
 end
 
 --- 获取当前波次/总波次信息

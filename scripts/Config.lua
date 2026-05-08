@@ -26,12 +26,15 @@ Config.XP_TABLE = { 5, 10, 18, 28, 40, 55, 73, 95, 120, 150 }
 -- mob_clash: 蓄力后冲锋（正方形）
 Config.ENEMY_AI = {
     mob_common = {
-        stopRadius = 28,        -- 停止接近的距离（玩家半径+此值≈围绕距离）
-        attackInterval = 0.8,   -- 碰撞攻击间隔
+        orbitRadius = 30,       -- 围绕玩家的距离（玩家半径+此值）
+        attackInterval = 1.2,   -- 攻击间隔（秒）
+        lungeSpeed = 320,       -- 冲顶速度
+        lungeDuration = 0.10,   -- 冲顶单程时长（秒），来回共 0.20s
     },
     mob_shooter = {
-        preferDist = 150,       -- 理想射击距离
-        minDist = 100,          -- 太近会后退
+        attackRange = 200,      -- 攻击距离：进入此范围才开火
+        fleeRange = 80,         -- 逃离距离：小于此值则逃跑
+        fleeSpeed = 1.5,        -- 逃跑速度倍率
         fireInterval = 1.6,     -- 射击间隔
         bulletSpeed = 200,      -- 子弹速度
         bulletRadius = 4,       -- 子弹碰撞半径
