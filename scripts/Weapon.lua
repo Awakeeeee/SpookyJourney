@@ -196,6 +196,16 @@ function Weapon._Explode(projectile, enemies, onHit)
     })
 end
 
+--- 清除所有投射物和特效（房间切换时调用）
+function Weapon.ClearProjectiles()
+    Weapon.projectiles = {}
+    Weapon.sweepEffects = {}
+    -- 重置冷却
+    for name, state in pairs(Weapon.states) do
+        state.cooldownTimer = 0
+    end
+end
+
 --- 随机选取一个范围内的敌人作为目标
 ---@param player table
 ---@param enemies table

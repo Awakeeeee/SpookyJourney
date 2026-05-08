@@ -5,6 +5,7 @@
 local UI = require("urhox-libs/UI")
 local Player = require("Player")
 local EnemySpawner = require("EnemySpawner")
+local GameState = require("GameState")
 
 local HUD = {}
 
@@ -148,15 +149,16 @@ function HUD.Refresh(hud)
     -- 等级
     hud.levelLabel:SetText("Lv." .. Player.level)
 
-    -- 波次
+    -- 波次（含层数）
     local wave, total = EnemySpawner.GetWaveInfo()
+    local depth = GameState.depth or 1
     local stateIcon = ""
     if EnemySpawner.waveState == "warning" then
         stateIcon = " !"
     elseif EnemySpawner.waveState == "done" then
         stateIcon = " OK"
     end
-    hud.waveLabel:SetText("Wave " .. wave .. "/" .. total .. stateIcon)
+    hud.waveLabel:SetText("D" .. depth .. " Wave " .. wave .. "/" .. total .. stateIcon)
 end
 
 --- 显示状态文字（胜利/失败）

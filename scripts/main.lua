@@ -20,6 +20,8 @@ local gameCanvas_ = nil
 local hud_ = nil
 ---@type table
 local levelUpUI_ = nil
+---@type any
+local debugBtn_ = nil
 local statusShown_ = false
 
 -- ============================================================================
@@ -75,13 +77,35 @@ function Start()
         HUD.HideStatus(hud_)
     end)
 
-    -- 构建 UI 树：画布(底) + HUD(顶)
+    -- DEBUG 按钮（右下角）
+    debugBtn_ = UI.Button {
+        text = "DEBUG\nClear",
+        fontSize = 11,
+        width = 60,
+        height = 44,
+        variant = "outline",
+        borderRadius = 6,
+        color = "#FF8800",
+        borderColor = "#FF8800",
+        onClick = function()
+            GameState.DebugClearRoom()
+        end,
+    }
+
+    -- 构建 UI 树：画布(底) + HUD(顶) + DEBUG按钮
     local root = UI.Panel {
         width = "100%",
         height = "100%",
         children = {
             gameCanvas_,
             hud_.panel,
+            -- DEBUG 按钮容器（右下角定位）
+            UI.Panel {
+                position = "absolute",
+                bottom = 20,
+                right = 14,
+                children = { debugBtn_ },
+            },
         }
     }
     UI.SetRoot(root)
@@ -128,16 +152,13 @@ function HandleUpdate(eventType, eventData)
         -- 暂停时仍更新粒子动画
         Particle.Update(dt)
 
-    elseif state == "victory" then
-        if not statusShown_ then
-            HUD.ShowStatus(hud_, "Victory!", "Tap to restart")
-            statusShown_ = true
-        end
-        Particle.Update(dt)
-        -- 点击重开
-        if input:GetMouseButtonPress(MOUSEB_LEFT) then
-            _RestartGame()
-        end
+    elseif state == "room_clear" then
+        -- 房间已通关，玩家可移动选门
+        GameState.Update(dt, inputX, inputY)
+
+    elseif state == "transition" then
+        -- 过渡到下一房间
+        GameState.Update(dt, inputX, inputY)
 
     elseif state == "gameover" then
         if not statusShown_ then

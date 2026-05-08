@@ -121,6 +121,20 @@ Config.WEAPONS = {
     },
 }
 
+-- 门（房间通关后出现）
+Config.DOOR = {
+    count = 3,              -- 每次生成门数量
+    width = 28,             -- 门的宽度（绘制用）
+    height = 8,             -- 门的厚度（绘制用）
+    rotateSpeed = 2.0,      -- 旋转速度（弧度/秒）
+    triggerRadius = 22,     -- 玩家碰撞触发半径
+    color = { 120, 200, 255, 255 },
+    glowColor = { 80, 160, 255, 60 },
+}
+
+-- 房间过渡
+Config.TRANSITION_TIME = 0.3  -- 过渡动画时长（秒）
+
 -- 背景颜色
 Config.BG_COLOR = { 22, 22, 35, 255 }
 Config.BG_GRID_COLOR = { 35, 35, 50, 255 }

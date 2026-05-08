@@ -23,6 +23,7 @@ function Renderer.DrawAll(nvg, gameState)
     Renderer.DrawWeaponEffects(nvg)
     Renderer.DrawPlayer(nvg)
     Renderer.DrawParticles(nvg)
+    Renderer.DrawDoors(nvg, gameState and gameState.doors)
     Renderer.DrawRoomBorder(nvg)
 end
 
@@ -328,6 +329,44 @@ function Renderer.DrawXPGems(nvg, gems)
             nvgFillColor(nvg, nvgRGBA(100, 255, 150, 220))
             nvgFill(nvg)
         end
+    end
+end
+
+--- 绘制通关后出现的门
+function Renderer.DrawDoors(nvg, doors)
+    if not doors or #doors == 0 then return end
+    local dc = Config.DOOR
+    local w = dc.width
+    local h = dc.height
+
+    for _, door in ipairs(doors) do
+        nvgSave(nvg)
+        nvgTranslate(nvg, door.x, door.y)
+
+        -- 外发光圈
+        local gc = dc.glowColor
+        local pulse = math.sin(door.rotation * 3) * 0.3 + 0.7
+        local glowR = dc.triggerRadius * pulse
+        nvgBeginPath(nvg)
+        nvgCircle(nvg, 0, 0, glowR)
+        nvgFillColor(nvg, nvgRGBA(gc[1], gc[2], gc[3], gc[4]))
+        nvgFill(nvg)
+
+        -- 旋转门矩形
+        nvgSave(nvg)
+        nvgRotate(nvg, door.rotation)
+        nvgBeginPath(nvg)
+        nvgRect(nvg, -w / 2, -h / 2, w, h)
+        local c = dc.color
+        nvgFillColor(nvg, nvgRGBA(c[1], c[2], c[3], c[4]))
+        nvgFill(nvg)
+        -- 白色边框
+        nvgStrokeColor(nvg, nvgRGBA(255, 255, 255, 180))
+        nvgStrokeWidth(nvg, 1.5)
+        nvgStroke(nvg)
+        nvgRestore(nvg)
+
+        nvgRestore(nvg)
     end
 end
 

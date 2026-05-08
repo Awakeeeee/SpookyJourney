@@ -1,6 +1,6 @@
 -- ============================================================================
 -- GameState.lua - 游戏状态机
--- 管理游戏流程：playing → levelup → playing → victory/gameover
+-- 管理游戏流程：playing → room_clear → transition → playing(下一房间)
 -- ============================================================================
 
 local Config = require("Config")
@@ -13,11 +13,14 @@ local Collision = require("Collision")
 
 local GameState = {}
 
---- 初始化/重置游戏
+--- 初始化/重置游戏（完全重置，包括 depth）
 function GameState.Init()
-    GameState.state = "playing"  -- playing / levelup / victory / gameover
-    GameState.xpGems = {}        -- 掉落的经验宝石列表
-    GameState.enemyBullets = {}  -- 敌人子弹列表 {x,y,vx,vy,damage,radius,lifetime,alive}
+    GameState.state = "playing"  -- playing / levelup / room_clear / transition / gameover
+    GameState.depth = 1          -- 当前房间层数
+    GameState.xpGems = {}
+    GameState.enemyBullets = {}
+    GameState.doors = {}         -- 通关后出现的门列表
+    GameState.transitionTimer = 0
     GameState.pendingLevelUp = false
 
     Player.Init()
@@ -26,7 +29,7 @@ function GameState.Init()
     Particle.Init()
     Upgrade.Init()
 
-    print("[GameState] Game initialized. State = playing")
+    print("[GameState] Game initialized. Depth = 1, State = playing")
 end
 
 --- 每帧更新
@@ -34,6 +37,46 @@ end
 ---@param inputX number 摇杆输入 X [-1, 1]
 ---@param inputY number 摇杆输入 Y [-1, 1]
 function GameState.Update(dt, inputX, inputY)
+
+    -- ================================================================
+    -- room_clear: 玩家可移动，等待选门
+    -- ================================================================
+    if GameState.state == "room_clear" then
+        Player.Update(dt, inputX, inputY)
+        Particle.Update(dt)
+
+        -- 更新门旋转
+        for _, door in ipairs(GameState.doors) do
+            door.rotation = door.rotation + Config.DOOR.rotateSpeed * dt
+        end
+
+        -- 检测玩家与门碰撞
+        for _, door in ipairs(GameState.doors) do
+            if Collision.CircleCircle(Player.x, Player.y, Player.radius,
+                door.x, door.y, Config.DOOR.triggerRadius) then
+                GameState.state = "transition"
+                GameState.transitionTimer = Config.TRANSITION_TIME
+                print("[GameState] Door touched! Transitioning to next room...")
+                return
+            end
+        end
+        return
+    end
+
+    -- ================================================================
+    -- transition: 短暂过渡后进入下一房间
+    -- ================================================================
+    if GameState.state == "transition" then
+        GameState.transitionTimer = GameState.transitionTimer - dt
+        if GameState.transitionTimer <= 0 then
+            GameState._EnterNextRoom()
+        end
+        return
+    end
+
+    -- ================================================================
+    -- playing: 正常战斗
+    -- ================================================================
     if GameState.state ~= "playing" then return end
 
     -- 1. 更新玩家移动
@@ -74,7 +117,6 @@ function GameState.Update(dt, inputX, inputY)
             b.x = b.x + b.vx * dt
             b.y = b.y + b.vy * dt
             b.lifetime = b.lifetime - dt
-            -- 超时或出界
             if b.lifetime <= 0
                 or b.x < -20 or b.x > Config.ROOM_WIDTH + 20
                 or b.y < -20 or b.y > Config.ROOM_HEIGHT + 20 then
@@ -156,18 +198,117 @@ function GameState.Update(dt, inputX, inputY)
     -- 13. 更新粒子
     Particle.Update(dt)
 
-    -- 14. 检查胜利条件
+    -- 14. 检查房间通关（所有波次完成 + 无存活敌人 + 无宝石）
     if EnemySpawner.IsAllDone() then
         local alive = 0
         for _, e in ipairs(EnemySpawner.enemies) do
             if e.alive then alive = alive + 1 end
         end
         if alive == 0 and #GameState.xpGems == 0 then
-            GameState.state = "victory"
-            print("[GameState] Victory! All waves cleared. State = victory")
+            GameState._OnRoomCleared()
         end
     end
 end
+
+-- ============================================================================
+-- 房间推进
+-- ============================================================================
+
+--- 房间通关：生成门
+function GameState._OnRoomCleared()
+    GameState.doors = GameState._GenerateDoors()
+    GameState.state = "room_clear"
+    print("[GameState] Room cleared! Depth=" .. GameState.depth .. " Doors generated: " .. #GameState.doors)
+end
+
+--- 进入下一房间
+function GameState._EnterNextRoom()
+    GameState.depth = GameState.depth + 1
+    GameState.doors = {}
+    GameState.xpGems = {}
+    GameState.enemyBullets = {}
+
+    -- 重置波次（循环使用 WAVES 配置）
+    EnemySpawner.Init()
+
+    -- 重置武器投射物（保留武器本身）
+    Weapon.ClearProjectiles()
+
+    -- 玩家位置重置到房间中央（保留 hp/武器/升级/等级）
+    Player.x = Config.ROOM_WIDTH / 2
+    Player.y = Config.ROOM_HEIGHT / 2
+
+    GameState.state = "playing"
+    print("[GameState] Entered room depth=" .. GameState.depth .. ". State = playing")
+end
+
+--- 生成门（四面墙随机位置）
+---@return table[] doors
+function GameState._GenerateDoors()
+    local doors = {}
+    local count = Config.DOOR.count
+    local margin = 40  -- 距离墙角最小距离
+    local W = Config.ROOM_WIDTH
+    local H = Config.ROOM_HEIGHT
+
+    -- 可选墙壁及其生成范围
+    local walls = {
+        { wall = "top",    genX = true,  fixed = 0, min = margin, max = W - margin },
+        { wall = "bottom", genX = true,  fixed = H, min = margin, max = W - margin },
+        { wall = "left",   genX = false, fixed = 0, min = margin, max = H - margin },
+        { wall = "right",  genX = false, fixed = W, min = margin, max = H - margin },
+    }
+
+    -- 随机打乱墙壁顺序
+    for i = #walls, 2, -1 do
+        local j = math.random(1, i)
+        walls[i], walls[j] = walls[j], walls[i]
+    end
+
+    -- 在前 count 面墙上各放一扇门（简单方案：每面墙最多一扇）
+    for i = 1, math.min(count, #walls) do
+        local w = walls[i]
+        local pos = math.random(w.min, w.max)
+        local x, y
+        if w.genX then
+            x, y = pos, w.fixed
+        else
+            x, y = w.fixed, pos
+        end
+        table.insert(doors, {
+            x = x,
+            y = y,
+            wall = w.wall,
+            rotation = math.random() * math.pi * 2,  -- 随机初始旋转
+            type = "combat",
+        })
+    end
+
+    return doors
+end
+
+-- ============================================================================
+-- DEBUG
+-- ============================================================================
+
+--- DEBUG: 立即通关当前房间（杀死所有敌人+清空宝石）
+function GameState.DebugClearRoom()
+    if GameState.state ~= "playing" then return end
+    print("[GameState] DEBUG: Clearing room!")
+    for _, e in ipairs(EnemySpawner.enemies) do
+        if e.alive then
+            e.alive = false
+            GameState._OnEnemyKilled(e)
+        end
+    end
+    -- 强制完成所有波次
+    EnemySpawner.waveState = "done"
+    EnemySpawner.spawnQueue = {}
+end
+
+-- ============================================================================
+-- 其他
+-- ============================================================================
 
 --- 敌人被击杀的处理
 ---@param enemy EnemyObj
