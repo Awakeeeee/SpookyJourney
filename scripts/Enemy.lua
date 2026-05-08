@@ -96,14 +96,20 @@ function Enemy:Update(dt, targetX, targetY)
         end
     end
 
+    local result
     if self.aiType == "mob_common" then
-        return self:_UpdateCommon(dt, targetX, targetY)
+        result = self:_UpdateCommon(dt, targetX, targetY)
     elseif self.aiType == "mob_shooter" then
-        return self:_UpdateShooter(dt, targetX, targetY)
+        result = self:_UpdateShooter(dt, targetX, targetY)
     elseif self.aiType == "mob_clash" then
-        return self:_UpdateClash(dt, targetX, targetY)
+        result = self:_UpdateClash(dt, targetX, targetY)
     end
-    return nil
+
+    -- 统一边界钳制（所有 AI 类型、所有状态）
+    self.x = math.max(self.radius, math.min(Config.ROOM_WIDTH - self.radius, self.x))
+    self.y = math.max(self.radius, math.min(Config.ROOM_HEIGHT - self.radius, self.y))
+
+    return result
 end
 
 -- ============================================================================
@@ -295,11 +301,9 @@ function Enemy:_UpdateClash(dt, targetX, targetY)
             self.aiState = "cooldown"
             self.aiTimer = 0.6  -- 冲锋后短暂停顿
         end
-        -- 碰到房间边界也停止
+        -- 碰到房间边界也停止冲锋（位置由 Update 统一 clamp）
         if self.x < self.radius or self.x > Config.ROOM_WIDTH - self.radius
             or self.y < self.radius or self.y > Config.ROOM_HEIGHT - self.radius then
-            self.x = math.max(self.radius, math.min(Config.ROOM_WIDTH - self.radius, self.x))
-            self.y = math.max(self.radius, math.min(Config.ROOM_HEIGHT - self.radius, self.y))
             self.aiState = "cooldown"
             self.aiTimer = 0.6
         end
