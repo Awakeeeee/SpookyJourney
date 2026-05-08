@@ -49,6 +49,9 @@ function GameCanvas:Render(nvg)
 
     nvgResetScissor(nvg)
     nvgRestore(nvg)
+
+    -- HUD 层：撤离倒计时（屏幕坐标）
+    Renderer.DrawEvacuationCountdown(nvg, self.gameState_, l.w)
 end
 
 return GameCanvas

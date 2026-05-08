@@ -7,6 +7,7 @@ local Player = require("Player")
 local EnemySpawner = require("EnemySpawner")
 local Weapon = require("Weapon")
 local Particle = require("Particle")
+local Collision = require("Collision")
 
 local Renderer = {}
 
@@ -15,8 +16,10 @@ local Renderer = {}
 ---@param gameState table GameState 模块
 function Renderer.DrawAll(nvg, gameState)
     Renderer.DrawBackground(nvg)
+    Renderer.DrawRoomZone(nvg, gameState)
     Renderer.DrawWarnings(nvg)
     Renderer.DrawXPGems(nvg, gameState and gameState.xpGems)
+    Renderer.DrawChest(nvg, gameState and gameState.chest)
     Renderer.DrawEnemies(nvg)
     Renderer.DrawEnemyBullets(nvg, gameState and gameState.enemyBullets)
     Renderer.DrawProjectiles(nvg)
@@ -270,27 +273,28 @@ function Renderer.DrawWeaponEffects(nvg)
             nvgCircle(nvg, e.x, e.y, r)
             nvgFillColor(nvg, nvgRGBA(255, 150, 30, alpha))
             nvgFill(nvg)
-        else
-            -- 剑挥砍扇形（闪白）
-            local halfAngle = math.rad(e.sweepAngle / 2)
-            local startAngle = e.angle - halfAngle
-            local endAngle = e.angle + halfAngle
-            -- 白色闪光强度随时间衰减
-            local flash = math.floor(math.max(0, (e.timer / e.maxTime)) * 220)
+        elseif e.isSlash then
+            -- 剑矩形斩击（闪白剑气）
+            local progress = e.timer / e.maxTime  -- 1→0
+            local flash = math.floor(math.max(0, progress) * 240)
+            local halfW = e.slashWidth / 2
+
+            nvgSave(nvg)
+            nvgTranslate(nvg, e.x, e.y)
+            nvgRotate(nvg, e.angle)
+
+            -- 白色矩形填充
             nvgBeginPath(nvg)
-            nvgMoveTo(nvg, e.x, e.y)
-            nvgArc(nvg, e.x, e.y, e.radius, startAngle, endAngle, 2) -- NVG_CCW=2
-            nvgClosePath(nvg)
+            nvgRect(nvg, 0, -halfW, e.slashLength, e.slashWidth)
             nvgFillColor(nvg, nvgRGBA(255, 255, 255, flash))
             nvgFill(nvg)
-            -- 扇形边缘描边
-            nvgBeginPath(nvg)
-            nvgMoveTo(nvg, e.x, e.y)
-            nvgArc(nvg, e.x, e.y, e.radius, startAngle, endAngle, 2)
-            nvgClosePath(nvg)
-            nvgStrokeColor(nvg, nvgRGBA(200, 230, 255, flash))
+
+            -- 淡蓝色描边（剑气感）
+            nvgStrokeColor(nvg, nvgRGBA(180, 220, 255, flash))
             nvgStrokeWidth(nvg, 1.5)
             nvgStroke(nvg)
+
+            nvgRestore(nvg)
         end
     end
 end
@@ -332,19 +336,165 @@ function Renderer.DrawXPGems(nvg, gems)
     end
 end
 
---- 绘制通关后出现的门
+-- ============================================================================
+-- 房间区域绘制
+-- ============================================================================
+
+--- 绘制房间特殊区域（恢复/撤离）
+function Renderer.DrawRoomZone(nvg, gameState)
+    if not gameState then return end
+    local roomType = gameState.currentRoomType
+    if roomType == "recovery" then
+        Renderer._DrawRecoveryZone(nvg, gameState)
+    elseif roomType == "evacuation" then
+        Renderer._DrawEvacuationZone(nvg, gameState)
+    end
+end
+
+--- 绘制恢复区域（温泉 — 暖色光圈 + 涟漪效果）
+function Renderer._DrawRecoveryZone(nvg, gameState)
+    local zCfg = Config.ROOM_TYPES.recovery.zone
+    local cx = Config.ROOM_WIDTH / 2
+    local cy = Config.ROOM_HEIGHT / 2
+    local r = zCfg.radius
+
+    -- 外层光晕
+    local gc = zCfg.glowColor
+    nvgBeginPath(nvg)
+    nvgCircle(nvg, cx, cy, r + 12)
+    nvgFillColor(nvg, nvgRGBA(gc[1], gc[2], gc[3], gc[4]))
+    nvgFill(nvg)
+
+    -- 半透明填充
+    local fc = zCfg.fillColor
+    nvgBeginPath(nvg)
+    nvgCircle(nvg, cx, cy, r)
+    nvgFillColor(nvg, nvgRGBA(fc[1], fc[2], fc[3], fc[4]))
+    nvgFill(nvg)
+
+    -- 边框
+    local bc = zCfg.borderColor
+    nvgBeginPath(nvg)
+    nvgCircle(nvg, cx, cy, r)
+    nvgStrokeColor(nvg, nvgRGBA(bc[1], bc[2], bc[3], bc[4]))
+    nvgStrokeWidth(nvg, 2)
+    nvgStroke(nvg)
+
+    -- 已使用标记
+    if gameState.recoveryUsed then
+        nvgFontFace(nvg, "sans")
+        nvgFontSize(nvg, 14)
+        nvgTextAlign(nvg, 2 + 16) -- CENTER|MIDDLE
+        nvgFillColor(nvg, nvgRGBA(200, 200, 200, 150))
+        nvgText(nvg, cx, cy, "已恢复")
+    else
+        -- 温泉 ~ 符号
+        nvgFontFace(nvg, "sans")
+        nvgFontSize(nvg, 22)
+        nvgTextAlign(nvg, 2 + 16)
+        nvgFillColor(nvg, nvgRGBA(255, 200, 100, 180))
+        nvgText(nvg, cx, cy, "♨")
+    end
+end
+
+--- 绘制撤离区域（蓝色虚线圆 + 脉冲效果）
+function Renderer._DrawEvacuationZone(nvg, gameState)
+    local zCfg = Config.ROOM_TYPES.evacuation.zone
+    local cx = Config.ROOM_WIDTH / 2
+    local cy = Config.ROOM_HEIGHT / 2
+    local r = zCfg.radius
+
+    -- 半透明填充
+    local fc = zCfg.fillColor
+    nvgBeginPath(nvg)
+    nvgCircle(nvg, cx, cy, r)
+    nvgFillColor(nvg, nvgRGBA(fc[1], fc[2], fc[3], fc[4]))
+    nvgFill(nvg)
+
+    -- 虚线圆边框（用多段弧线模拟）
+    local bc = zCfg.borderColor
+    local dashLen = zCfg.dashLength
+    local dashGap = zCfg.dashGap
+    local circumference = 2 * math.pi * r
+    local segTotal = dashLen + dashGap
+    local segCount = math.floor(circumference / segTotal)
+    local dashAngle = (dashLen / circumference) * 2 * math.pi
+
+    nvgStrokeColor(nvg, nvgRGBA(bc[1], bc[2], bc[3], bc[4]))
+    nvgStrokeWidth(nvg, 2)
+    for i = 0, segCount - 1 do
+        local startAngle = (i * segTotal / circumference) * 2 * math.pi
+        nvgBeginPath(nvg)
+        nvgArc(nvg, cx, cy, r, startAngle, startAngle + dashAngle, 1)  -- NVG_CW
+        nvgStroke(nvg)
+    end
+
+    -- 进入区域时脉冲外圈
+    if gameState.evacuationActive then
+        local pulse = math.sin(gameState.evacuationTimer * 4) * 0.4 + 0.6
+        local pulseR = r + 6 * pulse
+        nvgBeginPath(nvg)
+        nvgCircle(nvg, cx, cy, pulseR)
+        nvgStrokeColor(nvg, nvgRGBA(bc[1], bc[2], bc[3], math.floor(pulse * 100)))
+        nvgStrokeWidth(nvg, 1.5)
+        nvgStroke(nvg)
+    end
+
+    -- 中心图标
+    nvgFontFace(nvg, "sans")
+    nvgFontSize(nvg, 18)
+    nvgTextAlign(nvg, 2 + 16)
+    if gameState.evacuationActive then
+        nvgFillColor(nvg, nvgRGBA(80, 220, 255, 220))
+    else
+        nvgFillColor(nvg, nvgRGBA(80, 200, 255, 120))
+    end
+    nvgText(nvg, cx, cy, "▲ EXIT")
+end
+
+--- 绘制撤离倒计时（HUD 层，在游戏世界坐标上方大字显示）
+---@param nvg userdata
+---@param gameState table
+---@param screenW number 屏幕逻辑宽度
+function Renderer.DrawEvacuationCountdown(nvg, gameState, screenW)
+    if not gameState then return end
+    if gameState.currentRoomType ~= "evacuation" then return end
+    if not gameState.evacuationActive then return end
+
+    local secs = math.ceil(gameState.evacuationTimer)
+    local text = tostring(secs)
+
+    nvgFontFace(nvg, "sans")
+    nvgFontSize(nvg, 72)
+    nvgTextAlign(nvg, 2 + 16) -- CENTER|MIDDLE
+    -- 阴影
+    nvgFillColor(nvg, nvgRGBA(0, 0, 0, 150))
+    nvgText(nvg, screenW / 2 + 2, 62, text)
+    -- 主字
+    local urgency = (secs <= 3) and 1 or 0
+    local r = 80 + urgency * 175
+    local g = 220 - urgency * 180
+    local b = 255 - urgency * 200
+    nvgFillColor(nvg, nvgRGBA(r, g, b, 255))
+    nvgText(nvg, screenW / 2, 60, text)
+end
+
+-- ============================================================================
+-- 门绘制 + 图标
+-- ============================================================================
+
+--- 绘制通关后出现的门（类型颜色 + 图标）
 function Renderer.DrawDoors(nvg, doors)
     if not doors or #doors == 0 then return end
     local dc = Config.DOOR
-    local w = dc.width
-    local h = dc.height
 
     for _, door in ipairs(doors) do
+        local style = Config.DOOR_STYLES[door.type] or Config.DOOR_STYLES.combat
         nvgSave(nvg)
         nvgTranslate(nvg, door.x, door.y)
 
-        -- 外发光圈
-        local gc = dc.glowColor
+        -- 外发光圈（脉冲）
+        local gc = style.glowColor
         local pulse = math.sin(door.rotation * 3) * 0.3 + 0.7
         local glowR = dc.triggerRadius * pulse
         nvgBeginPath(nvg)
@@ -352,22 +502,95 @@ function Renderer.DrawDoors(nvg, doors)
         nvgFillColor(nvg, nvgRGBA(gc[1], gc[2], gc[3], gc[4]))
         nvgFill(nvg)
 
-        -- 旋转门矩形
-        nvgSave(nvg)
-        nvgRotate(nvg, door.rotation)
+        -- 底圈
+        local c = style.color
         nvgBeginPath(nvg)
-        nvgRect(nvg, -w / 2, -h / 2, w, h)
-        local c = dc.color
-        nvgFillColor(nvg, nvgRGBA(c[1], c[2], c[3], c[4]))
+        nvgCircle(nvg, 0, 0, 14)
+        nvgFillColor(nvg, nvgRGBA(c[1], c[2], c[3], 60))
         nvgFill(nvg)
-        -- 白色边框
-        nvgStrokeColor(nvg, nvgRGBA(255, 255, 255, 180))
-        nvgStrokeWidth(nvg, 1.5)
+        nvgStrokeColor(nvg, nvgRGBA(c[1], c[2], c[3], 200))
+        nvgStrokeWidth(nvg, 2)
         nvgStroke(nvg)
-        nvgRestore(nvg)
+
+        -- 绘制对应图标
+        if door.type == "combat" then
+            Renderer._DrawIconSwords(nvg, c)
+        elseif door.type == "recovery" then
+            Renderer._DrawIconHeart(nvg, c)
+        elseif door.type == "evacuation" then
+            Renderer._DrawIconExit(nvg, c)
+        elseif door.type == "back" then
+            Renderer._DrawIconBack(nvg, c)
+        end
 
         nvgRestore(nvg)
     end
+end
+
+--- 图标：交叉剑（战斗）
+function Renderer._DrawIconSwords(nvg, color)
+    local s = 8
+    nvgStrokeColor(nvg, nvgRGBA(color[1], color[2], color[3], 255))
+    nvgStrokeWidth(nvg, 2)
+    -- 左剑 ╲
+    nvgBeginPath(nvg)
+    nvgMoveTo(nvg, -s, -s)
+    nvgLineTo(nvg, s, s)
+    nvgStroke(nvg)
+    -- 右剑 ╱
+    nvgBeginPath(nvg)
+    nvgMoveTo(nvg, s, -s)
+    nvgLineTo(nvg, -s, s)
+    nvgStroke(nvg)
+    -- 交叉点小圆
+    nvgBeginPath(nvg)
+    nvgCircle(nvg, 0, 0, 2)
+    nvgFillColor(nvg, nvgRGBA(color[1], color[2], color[3], 255))
+    nvgFill(nvg)
+end
+
+--- 图标：爱心（恢复）
+function Renderer._DrawIconHeart(nvg, color)
+    nvgFillColor(nvg, nvgRGBA(color[1], color[2], color[3], 255))
+    nvgFontFace(nvg, "sans")
+    nvgFontSize(nvg, 20)
+    nvgTextAlign(nvg, 2 + 16) -- CENTER|MIDDLE
+    nvgText(nvg, 0, 0, "♥")
+end
+
+--- 图标：箭头向上（撤离/出口）
+function Renderer._DrawIconExit(nvg, color)
+    nvgStrokeColor(nvg, nvgRGBA(color[1], color[2], color[3], 255))
+    nvgStrokeWidth(nvg, 2)
+    -- 向上箭头
+    nvgBeginPath(nvg)
+    nvgMoveTo(nvg, 0, 7)
+    nvgLineTo(nvg, 0, -7)
+    nvgStroke(nvg)
+    -- 箭头头部
+    nvgBeginPath(nvg)
+    nvgMoveTo(nvg, -5, -2)
+    nvgLineTo(nvg, 0, -7)
+    nvgLineTo(nvg, 5, -2)
+    nvgStroke(nvg)
+end
+
+--- 图标：回退箭头（返回上一房间）
+function Renderer._DrawIconBack(nvg, color)
+    nvgStrokeColor(nvg, nvgRGBA(color[1], color[2], color[3], 255))
+    nvgStrokeWidth(nvg, 2)
+    -- 向左弧线箭头
+    nvgBeginPath(nvg)
+    nvgArc(nvg, 0, 0, 7, -math.pi * 0.8, math.pi * 0.3, 1)
+    nvgStroke(nvg)
+    -- 箭头头部
+    local tipX = 7 * math.cos(-math.pi * 0.8)
+    local tipY = 7 * math.sin(-math.pi * 0.8)
+    nvgBeginPath(nvg)
+    nvgMoveTo(nvg, tipX - 4, tipY - 1)
+    nvgLineTo(nvg, tipX, tipY)
+    nvgLineTo(nvg, tipX + 1, tipY + 4)
+    nvgStroke(nvg)
 end
 
 --- 绘制粒子效果
@@ -390,6 +613,82 @@ function Renderer.DrawParticles(nvg)
             nvgFill(nvg)
         end
     end
+end
+
+--- 绘制宝箱
+function Renderer.DrawChest(nvg, chest)
+    if not chest or not chest.alive then return end
+
+    local cc = Config.CHEST
+    local cx, cy = chest.x, chest.y
+    local r = cc.RADIUS
+
+    -- 摇晃偏移
+    local shakeOfs = 0
+    if chest.shakeTimer > 0 then
+        local progress = chest.shakeTimer / cc.SHAKE_DURATION  -- 1→0
+        local wave = math.sin(chest.shakeTimer * cc.SHAKE_FREQUENCY * math.pi * 2)
+        shakeOfs = wave * cc.SHAKE_INTENSITY * progress
+    end
+
+    nvgSave(nvg)
+    nvgTranslate(nvg, cx + shakeOfs, cy)
+
+    -- 检测范围光环（解锁后显示金色光晕）
+    if not chest.locked then
+        local gc = cc.GLOW_COLOR
+        nvgBeginPath(nvg)
+        nvgCircle(nvg, 0, 0, cc.DETECT_RADIUS)
+        nvgFillColor(nvg, nvgRGBA(gc[1], gc[2], gc[3], gc[4]))
+        nvgFill(nvg)
+    end
+
+    -- 箱体（圆角矩形）
+    local bodyW = r * 2
+    local bodyH = r * 1.4
+    local bc = cc.BODY_COLOR
+    nvgBeginPath(nvg)
+    nvgRoundedRect(nvg, -bodyW / 2, -bodyH / 2 + 2, bodyW, bodyH, 3)
+    nvgFillColor(nvg, nvgRGBA(bc[1], bc[2], bc[3], bc[4]))
+    nvgFill(nvg)
+    nvgStrokeColor(nvg, nvgRGBA(120, 80, 20, 255))
+    nvgStrokeWidth(nvg, 1.5)
+    nvgStroke(nvg)
+
+    -- 箱盖（上半部分圆角矩形）
+    local lidH = bodyH * 0.35
+    local lc = cc.LID_COLOR
+    nvgBeginPath(nvg)
+    nvgRoundedRect(nvg, -bodyW / 2, -bodyH / 2 - lidH + 4, bodyW, lidH, 3)
+    nvgFillColor(nvg, nvgRGBA(lc[1], lc[2], lc[3], lc[4]))
+    nvgFill(nvg)
+    nvgStrokeColor(nvg, nvgRGBA(140, 100, 30, 255))
+    nvgStrokeWidth(nvg, 1.5)
+    nvgStroke(nvg)
+
+    -- 锁/装饰（中心小矩形）
+    local lockSize = 6
+    if chest.locked then
+        -- 锁定：灰色锁
+        local kc = cc.LOCK_COLOR
+        nvgBeginPath(nvg)
+        nvgRoundedRect(nvg, -lockSize / 2, -lockSize / 2, lockSize, lockSize, 1)
+        nvgFillColor(nvg, nvgRGBA(kc[1], kc[2], kc[3], kc[4]))
+        nvgFill(nvg)
+        -- 锁孔
+        nvgBeginPath(nvg)
+        nvgCircle(nvg, 0, -1, 1.5)
+        nvgFillColor(nvg, nvgRGBA(60, 60, 70, 255))
+        nvgFill(nvg)
+    else
+        -- 解锁：金色装饰
+        nvgBeginPath(nvg)
+        nvgRoundedRect(nvg, -lockSize / 2, -lockSize / 2, lockSize, lockSize, 1)
+        nvgFillColor(nvg, nvgRGBA(255, 220, 80, 255))
+        nvgFill(nvg)
+    end
+
+    nvgRestore(nvg)
 end
 
 return Renderer

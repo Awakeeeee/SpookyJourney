@@ -106,9 +106,11 @@ Config.WAVE_INTERVAL = 2.0       -- 波次间等待时间（秒）
 -- 武器
 Config.WEAPONS = {
     sword = {
-        cooldown = 1.2, damage = 12,
-        sweepRadius = 50, sweepAngle = 120,  -- 度
-        sweepDuration = 0.25,
+        cooldown = 1.0, damage = 12,
+        slashLength = 55,    -- 长条攻击长度（从玩家向外延伸）
+        slashWidth = 24,     -- 长条攻击宽度
+        detectRange = 70,    -- 索敌范围
+        sweepDuration = 0.2, -- 特效持续时间
     },
     knife = {
         cooldown = 0.8, damage = 6,
@@ -130,6 +132,78 @@ Config.DOOR = {
     triggerRadius = 22,     -- 玩家碰撞触发半径
     color = { 120, 200, 255, 255 },
     glowColor = { 80, 160, 255, 60 },
+}
+
+-- 宝箱
+Config.CHEST = {
+    RADIUS = 16,              -- 箱体视觉半径
+    DETECT_RADIUS = 50,       -- 玩家检测范围
+    MARGIN = 60,              -- 距墙最小距离（生成位置）
+    ITEM_COUNT = 5,           -- 随机生成物品数
+    -- 视觉颜色
+    BODY_COLOR  = { 180, 130, 50, 255 },
+    LID_COLOR   = { 200, 150, 60, 255 },
+    LOCK_COLOR  = { 140, 140, 150, 255 },
+    GLOW_COLOR  = { 255, 220, 80, 40 },
+    -- 摇晃动画（锁定状态，玩家进入范围时触发）
+    SHAKE_DURATION  = 0.4,
+    SHAKE_INTENSITY = 3,
+    SHAKE_FREQUENCY = 24,
+    SHAKE_COOLDOWN  = 1.2,
+}
+
+-- ============================================================================
+-- 房间类型
+-- ============================================================================
+Config.ROOM_TYPES = {
+    combat = {
+        doorCount = 3,
+        hasEnemies = true,
+        hasChest = true,
+        doorsOnEntry = false,       -- 通关后才出门
+    },
+    recovery = {
+        doorCount = 2,
+        hasEnemies = false,
+        hasChest = false,
+        doorsOnEntry = true,        -- 进入即出门
+        zone = {
+            radius = 60,
+            healPercent = 0.30,
+            fillColor   = { 255, 140, 60, 30 },
+            borderColor = { 255, 180, 80, 120 },
+            glowColor   = { 255, 120, 40, 20 },
+        },
+    },
+    evacuation = {
+        doorCount = 1,              -- 仅 back 门
+        hasEnemies = false,
+        hasChest = false,
+        doorsOnEntry = true,
+        zone = {
+            radius = 55,
+            countdownTime = 10.0,
+            fillColor   = { 80, 200, 255, 20 },
+            borderColor = { 80, 220, 255, 150 },
+            dashLength  = 8,
+            dashGap     = 5,
+        },
+    },
+}
+
+-- 门的视觉样式（按目标房间类型着色）
+Config.DOOR_STYLES = {
+    combat     = { color = { 255, 80, 60, 255 },   glowColor = { 255, 60, 40, 50 }  },
+    recovery   = { color = { 80, 255, 120, 255 },  glowColor = { 60, 255, 100, 50 } },
+    evacuation = { color = { 80, 200, 255, 255 },  glowColor = { 60, 180, 255, 50 } },
+    back       = { color = { 200, 200, 200, 255 }, glowColor = { 180, 180, 180, 50 } },
+}
+
+-- 战斗房门的随机类型概率
+Config.DOOR_GENERATION = {
+    recoveryChance = 0.25,          -- 恢复房门概率
+    evacuationMinDepth = 5,         -- 撤离门最低层数
+    evacuationChance = 0.15,        -- 撤离房门概率
 }
 
 -- 房间过渡

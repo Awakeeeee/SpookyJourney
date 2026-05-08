@@ -49,4 +49,29 @@ function Collision.DistanceSq(ax, ay, bx, by)
     return dx * dx + dy * dy
 end
 
+--- 圆是否与有方向的长条矩形碰撞（剑气判定）
+--- 长条从 (ox, oy) 沿 (dirX, dirY) 方向延伸 length，宽度 width
+---@param cx number 圆心x
+---@param cy number 圆心y
+---@param cr number 圆半径
+---@param ox number 长条起点x
+---@param oy number 长条起点y
+---@param dirX number 方向单位向量x
+---@param dirY number 方向单位向量y
+---@param length number 长条长度
+---@param halfWidth number 长条半宽
+---@return boolean
+function Collision.CircleInSlash(cx, cy, cr, ox, oy, dirX, dirY, length, halfWidth)
+    -- 计算圆心相对于长条起点的偏移
+    local dx = cx - ox
+    local dy = cy - oy
+    -- 投影到长条方向轴（纵向）
+    local along = dx * dirX + dy * dirY
+    -- 投影到垂直轴（横向）
+    local perp = dx * (-dirY) + dy * dirX
+    -- 判定：纵向在 [-cr, length+cr] 且 横向距离 <= halfWidth+cr
+    return along > -cr and along < length + cr
+       and math.abs(perp) < halfWidth + cr
+end
+
 return Collision

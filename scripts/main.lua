@@ -11,6 +11,9 @@ local GameCanvas = require("GameCanvas")
 local HUD = require("HUD")
 local LevelUpUI = require("LevelUpUI")
 local Particle = require("Particle")
+local ItemDB = require("ItemDB")
+local Inventory = require("Inventory")
+local InventoryUI = require("InventoryUI")
 
 ---@type any
 local joystick_ = nil
@@ -22,6 +25,14 @@ local hud_ = nil
 local levelUpUI_ = nil
 ---@type any
 local debugBtn_ = nil
+---@type any
+local bagBtn_ = nil
+---@type any
+local openChestBtn_ = nil
+---@type InventoryData
+local playerBag_ = nil
+---@type table
+local inventoryUI_ = nil
 local statusShown_ = false
 
 -- ============================================================================
@@ -92,13 +103,74 @@ function Start()
         end,
     }
 
-    -- 构建 UI 树：画布(底) + HUD(顶) + DEBUG按钮
+    -- 初始化背包系统
+    playerBag_ = Inventory.New(8, 3)
+    -- 放入测试物品（每品质各一个）
+    local testProtoIds = { 1, 4, 7, 10, 13, 16 }
+    for _, pid in ipairs(testProtoIds) do
+        local item = ItemDB.CreateItem(pid)
+        if item then
+            playerBag_:AddItem(item)
+        end
+    end
+    inventoryUI_ = InventoryUI.Create(playerBag_)
+
+    -- 背包按钮（左下角）
+    bagBtn_ = UI.Button {
+        text = "背包",
+        fontSize = 12,
+        width = 56,
+        height = 40,
+        variant = "outline",
+        borderRadius = 6,
+        color = "#AACCFF",
+        borderColor = "#6688BB",
+        onClick = function()
+            if not InventoryUI.IsOpen(inventoryUI_) then
+                InventoryUI.Open(inventoryUI_)
+            end
+        end,
+    }
+
+    -- 开箱按钮（摇杆右侧，初始隐藏）
+    openChestBtn_ = UI.Button {
+        text = "开启\n宝箱",
+        fontSize = 11,
+        width = 56,
+        height = 44,
+        variant = "outline",
+        borderRadius = 6,
+        color = "#FFD850",
+        borderColor = "#CC9900",
+        onClick = function()
+            local chestInv = GameState.GetChestInventory()
+            if chestInv and not InventoryUI.IsOpen(inventoryUI_) then
+                InventoryUI.OpenChest(inventoryUI_, chestInv)
+            end
+        end,
+    }
+
+    -- 构建 UI 树：画布(底) + HUD(顶) + 按钮 + 背包Overlay
     local root = UI.Panel {
         width = "100%",
         height = "100%",
         children = {
             gameCanvas_,
             hud_.panel,
+            -- 背包按钮（左下角定位）
+            UI.Panel {
+                position = "absolute",
+                bottom = 20,
+                left = 14,
+                children = { bagBtn_ },
+            },
+            -- 开箱按钮容器（摇杆右侧，初始隐藏）
+            UI.Panel {
+                position = "absolute",
+                bottom = 100,
+                left = "56%",
+                children = { openChestBtn_ },
+            },
             -- DEBUG 按钮容器（右下角定位）
             UI.Panel {
                 position = "absolute",
@@ -106,6 +178,8 @@ function Start()
                 right = 14,
                 children = { debugBtn_ },
             },
+            -- 背包 Overlay（全屏覆盖，初始隐藏）
+            InventoryUI.GetOverlay(inventoryUI_),
         }
     }
     UI.SetRoot(root)
@@ -129,6 +203,11 @@ end
 ---@param eventData UpdateEventData
 function HandleUpdate(eventType, eventData)
     local dt = eventData["TimeStep"]:GetFloat()
+
+    -- 背包打开时暂停游戏逻辑
+    if InventoryUI.IsOpen(inventoryUI_) then
+        return
+    end
 
     -- 读取摇杆输入
     local inputX = 0
@@ -160,6 +239,16 @@ function HandleUpdate(eventType, eventData)
         -- 过渡到下一房间
         GameState.Update(dt, inputX, inputY)
 
+    elseif state == "victory" then
+        if not statusShown_ then
+            HUD.ShowStatus(hud_, "Victory!", "Successfully Evacuated!\nTap to restart")
+            statusShown_ = true
+        end
+        Particle.Update(dt)
+        if input:GetMouseButtonPress(MOUSEB_LEFT) then
+            _RestartGame()
+        end
+
     elseif state == "gameover" then
         if not statusShown_ then
             HUD.ShowStatus(hud_, "Game Over", "Tap to restart")
@@ -170,6 +259,11 @@ function HandleUpdate(eventType, eventData)
         if input:GetMouseButtonPress(MOUSEB_LEFT) then
             _RestartGame()
         end
+    end
+
+    -- 更新开箱按钮可见性
+    if openChestBtn_ then
+        openChestBtn_:SetVisible(GameState.CanOpenChest())
     end
 
     -- 刷新 HUD

@@ -62,6 +62,16 @@ function Particle.SpawnDamageNumber(x, y, damage)
         tostring(math.floor(damage)))
 end
 
+--- 治疗数字（绿色，向上漂浮）
+---@param x number
+---@param y number
+---@param amount number
+function Particle.SpawnHealNumber(x, y, amount)
+    spawn(x, y - 10, 0, -35, 1.0,
+        { 80, 255, 120, 255 }, 16,
+        "+" .. tostring(math.floor(amount)))
+end
+
 --- 死亡爆散
 ---@param x number
 ---@param y number

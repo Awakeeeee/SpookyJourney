@@ -40,10 +40,10 @@ function Upgrade.Init()
             end,
         },
         {
-            id = "sword_range", name = "长剑", desc = "剑攻击范围 +10",
+            id = "sword_range", name = "长剑", desc = "剑攻击长度 +10",
             category = "enhance", maxLevel = 3, currentLevel = 0,
             apply = function()
-                Config.WEAPONS.sword.sweepRadius = Config.WEAPONS.sword.sweepRadius + 10
+                Config.WEAPONS.sword.slashLength = Config.WEAPONS.sword.slashLength + 10
             end,
         },
         {

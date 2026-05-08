@@ -22,7 +22,7 @@ function Weapon.Init()
 
     for name, _ in pairs(Config.WEAPONS) do
         Weapon.states[name] = {
-            cooldownTimer = 0,
+            cooldownTimer = (name == "sword") and 1.0 or 0,  -- 剑有1秒初始冷却
             sweepTimer = 0,
             sweepAngle = 0,
         }
@@ -42,8 +42,12 @@ function Weapon.Update(dt, player, enemies, onSwordHit)
         if state and cfg then
             state.cooldownTimer = state.cooldownTimer - dt
             if state.cooldownTimer <= 0 then
+                local prevTimer = state.cooldownTimer
                 Weapon._Fire(weaponName, cfg, state, player, enemies, onSwordHit)
-                state.cooldownTimer = cfg.cooldown
+                -- _FireSword 无目标时会将 cooldownTimer 设为 0，此时不覆盖
+                if state.cooldownTimer == prevTimer then
+                    state.cooldownTimer = cfg.cooldown
+                end
             end
         end
     end
@@ -103,26 +107,62 @@ function Weapon._Fire(weaponName, cfg, state, player, enemies, onSwordHit)
     end
 end
 
---- 剑：扇形挥砍
+--- 剑：索敌 + 矩形斩击
 function Weapon._FireSword(cfg, state, player, enemies, onSwordHit)
-    local halfAngle = math.rad(cfg.sweepAngle / 2)
+    -- 索敌：找最近的存活敌人
+    local closest = nil
+    local closestDist = math.huge
+    for _, e in ipairs(enemies) do
+        if e.alive then
+            local d = Collision.DistanceSq(player.x, player.y, e.x, e.y)
+            if d < closestDist then
+                closestDist = d
+                closest = e
+            end
+        end
+    end
 
-    -- 添加挥砍特效
+    -- 范围内无敌人 → 不攻击，不消耗冷却
+    if not closest then
+        state.cooldownTimer = 0  -- 下一帧立即重试
+        return
+    end
+    local detectRange = cfg.detectRange or 70
+    if math.sqrt(closestDist) > detectRange then
+        state.cooldownTimer = 0
+        return
+    end
+
+    -- 计算攻击方向（玩家→最近敌人）
+    local dx = closest.x - player.x
+    local dy = closest.y - player.y
+    local dist = math.sqrt(dx * dx + dy * dy)
+    if dist < 0.01 then dist = 0.01 end
+    local dirX = dx / dist
+    local dirY = dy / dist
+    local angle = math.atan(dirY, dirX)
+
+    -- 更新玩家朝向
+    player.facing = angle
+
+    -- 添加矩形斩击特效
     table.insert(Weapon.sweepEffects, {
         x = player.x,
         y = player.y,
-        angle = player.facing,
+        angle = angle,
         timer = cfg.sweepDuration,
         maxTime = cfg.sweepDuration,
-        radius = cfg.sweepRadius,
-        sweepAngle = cfg.sweepAngle,
+        slashLength = cfg.slashLength,
+        slashWidth = cfg.slashWidth,
+        isSlash = true,
     })
 
-    -- 判定伤害：扇形范围内所有敌人，通过回调处理
+    -- 判定伤害：矩形范围内所有敌人
+    local halfW = cfg.slashWidth / 2
     for _, e in ipairs(enemies) do
         if e.alive then
-            if Collision.PointInFan(e.x, e.y, player.x, player.y,
-                cfg.sweepRadius + e.radius, player.facing, halfAngle) then
+            if Collision.CircleInSlash(e.x, e.y, e.radius,
+                player.x, player.y, dirX, dirY, cfg.slashLength, halfW) then
                 if onSwordHit then
                     onSwordHit(e, cfg.damage)
                 else
@@ -200,9 +240,9 @@ end
 function Weapon.ClearProjectiles()
     Weapon.projectiles = {}
     Weapon.sweepEffects = {}
-    -- 重置冷却
+    -- 重置冷却（剑保留1秒初始冷却）
     for name, state in pairs(Weapon.states) do
-        state.cooldownTimer = 0
+        state.cooldownTimer = (name == "sword") and 1.0 or 0
     end
 end
 

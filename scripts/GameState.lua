@@ -10,12 +10,14 @@ local Weapon = require("Weapon")
 local Particle = require("Particle")
 local Upgrade = require("Upgrade")
 local Collision = require("Collision")
+local Inventory = require("Inventory")
+local ItemDB = require("ItemDB")
 
 local GameState = {}
 
 --- 初始化/重置游戏（完全重置，包括 depth）
 function GameState.Init()
-    GameState.state = "playing"  -- playing / levelup / room_clear / transition / gameover
+    GameState.state = "playing"  -- playing / levelup / room_clear / transition / gameover / victory
     GameState.depth = 1          -- 当前房间层数
     GameState.xpGems = {}
     GameState.enemyBullets = {}
@@ -23,11 +25,30 @@ function GameState.Init()
     GameState.transitionTimer = 0
     GameState.pendingLevelUp = false
 
+    -- 房间类型
+    GameState.currentRoomType = "combat"
+    GameState.selectedDoorType = nil
+
+    -- 撤离房状态
+    GameState.evacuationTimer = 0
+    GameState.evacuationActive = false
+
+    -- 恢复房状态
+    GameState.recoveryUsed = false
+
+    -- 宝箱状态
+    GameState.chest = nil           -- 宝箱实体 {x, y, alive, locked, shakeTimer, shakeCooldown}
+    GameState.chestInventory = nil  -- 宝箱背包 (Inventory)
+    GameState.chestInRange = false  -- 玩家是否在检测范围内
+
     Player.Init()
     EnemySpawner.Init()
     Weapon.Init()
     Particle.Init()
     Upgrade.Init()
+
+    -- 生成宝箱
+    GameState._SpawnChest()
 
     print("[GameState] Game initialized. Depth = 1, State = playing")
 end
@@ -37,6 +58,72 @@ end
 ---@param inputX number 摇杆输入 X [-1, 1]
 ---@param inputY number 摇杆输入 Y [-1, 1]
 function GameState.Update(dt, inputX, inputY)
+
+    -- ================================================================
+    -- 非战斗房间（恢复/撤离）：playing 状态的独立逻辑
+    -- ================================================================
+    if GameState.state == "playing" and GameState.currentRoomType ~= "combat" then
+        Player.Update(dt, inputX, inputY)
+        Particle.Update(dt)
+
+        local cx = Config.ROOM_WIDTH / 2
+        local cy = Config.ROOM_HEIGHT / 2
+
+        if GameState.currentRoomType == "evacuation" then
+            local zCfg = Config.ROOM_TYPES.evacuation.zone
+            local dist = Collision.Distance(Player.x, Player.y, cx, cy)
+            local inZone = (dist < zCfg.radius)
+
+            if inZone then
+                if not GameState.evacuationActive then
+                    GameState.evacuationActive = true
+                end
+                GameState.evacuationTimer = GameState.evacuationTimer - dt
+                if GameState.evacuationTimer <= 0 then
+                    GameState.evacuationTimer = 0
+                    GameState.state = "victory"
+                    print("[GameState] Evacuation complete! VICTORY!")
+                    return
+                end
+            else
+                if GameState.evacuationActive then
+                    GameState.evacuationTimer = zCfg.countdownTime
+                    GameState.evacuationActive = false
+                end
+            end
+
+        elseif GameState.currentRoomType == "recovery" then
+            local zCfg = Config.ROOM_TYPES.recovery.zone
+            local dist = Collision.Distance(Player.x, Player.y, cx, cy)
+            local inZone = (dist < zCfg.radius)
+
+            if inZone and not GameState.recoveryUsed then
+                local healAmount = math.floor(Player.maxHp * zCfg.healPercent)
+                Player.hp = math.min(Player.maxHp, Player.hp + healAmount)
+                GameState.recoveryUsed = true
+                Particle.SpawnHealNumber(Player.x, Player.y - 20, healAmount)
+                print("[GameState] Recovery: +" .. healAmount .. " HP")
+            end
+        end
+
+        -- 门旋转
+        for _, door in ipairs(GameState.doors) do
+            door.rotation = door.rotation + Config.DOOR.rotateSpeed * dt
+        end
+
+        -- 门碰撞检测
+        for _, door in ipairs(GameState.doors) do
+            if Collision.CircleCircle(Player.x, Player.y, Player.radius,
+                door.x, door.y, Config.DOOR.triggerRadius) then
+                GameState.selectedDoorType = door.type
+                GameState.state = "transition"
+                GameState.transitionTimer = Config.TRANSITION_TIME
+                print("[GameState] Door touched (" .. door.type .. ")! Transitioning...")
+                return
+            end
+        end
+        return  -- 非战斗房到此结束，不进入下方战斗逻辑
+    end
 
     -- ================================================================
     -- room_clear: 玩家可移动，等待选门
@@ -72,6 +159,9 @@ function GameState.Update(dt, inputX, inputY)
             end
         end
 
+        -- 更新宝箱（room_clear 阶段也需要检测）
+        GameState.UpdateChest(dt)
+
         -- 更新门旋转
         for _, door in ipairs(GameState.doors) do
             door.rotation = door.rotation + Config.DOOR.rotateSpeed * dt
@@ -81,9 +171,10 @@ function GameState.Update(dt, inputX, inputY)
         for _, door in ipairs(GameState.doors) do
             if Collision.CircleCircle(Player.x, Player.y, Player.radius,
                 door.x, door.y, Config.DOOR.triggerRadius) then
+                GameState.selectedDoorType = door.type
                 GameState.state = "transition"
                 GameState.transitionTimer = Config.TRANSITION_TIME
-                print("[GameState] Door touched! Transitioning to next room...")
+                print("[GameState] Door touched (" .. door.type .. ")! Transitioning...")
                 return
             end
         end
@@ -225,7 +316,10 @@ function GameState.Update(dt, inputX, inputY)
     -- 13. 更新粒子
     Particle.Update(dt)
 
-    -- 14. 检查房间通关（所有波次完成 + 无存活敌人）
+    -- 14. 更新宝箱（检测距离、摇晃计时等）
+    GameState.UpdateChest(dt)
+
+    -- 15. 检查房间通关（所有波次完成 + 无存活敌人）
     if EnemySpawner.IsAllDone() then
         local alive = 0
         for _, e in ipairs(EnemySpawner.enemies) do
@@ -244,36 +338,115 @@ end
 --- 房间通关：生成门
 function GameState._OnRoomCleared()
     GameState.doors = GameState._GenerateDoors()
+    GameState._UnlockChest()
     GameState.state = "room_clear"
     print("[GameState] Room cleared! Depth=" .. GameState.depth .. " Doors generated: " .. #GameState.doors)
 end
 
 --- 进入下一房间
 function GameState._EnterNextRoom()
-    GameState.depth = GameState.depth + 1
+    local doorType = GameState.selectedDoorType or "combat"
+    local isBackDoor = (doorType == "back")
+    local roomType = isBackDoor and "combat" or doorType
+
+    -- Depth：back 门不增加层数
+    if not isBackDoor then
+        GameState.depth = GameState.depth + 1
+    end
+
+    -- 通用重置
+    GameState.currentRoomType = roomType
+    GameState.selectedDoorType = nil
     GameState.doors = {}
     GameState.xpGems = {}
     GameState.enemyBullets = {}
-
-    -- 重置波次（循环使用 WAVES 配置）
-    EnemySpawner.Init()
-
-    -- 重置武器投射物（保留武器本身）
     Weapon.ClearProjectiles()
-
-    -- 玩家位置重置到房间中央（保留 hp/武器/升级/等级）
     Player.x = Config.ROOM_WIDTH / 2
     Player.y = Config.ROOM_HEIGHT / 2
 
+    local rtCfg = Config.ROOM_TYPES[roomType]
+
+    -- 敌人
+    if rtCfg.hasEnemies then
+        EnemySpawner.Init()
+    else
+        EnemySpawner.enemies = {}
+        EnemySpawner.waveState = "done"
+        EnemySpawner.warnings = {}
+        EnemySpawner.spawnQueue = {}
+    end
+
+    -- 宝箱
+    if rtCfg.hasChest then
+        GameState._SpawnChest()
+    else
+        GameState.chest = nil
+        GameState.chestInventory = nil
+        GameState.chestInRange = false
+    end
+
+    -- 撤离房初始化
+    GameState.evacuationActive = false
+    if roomType == "evacuation" then
+        GameState.evacuationTimer = Config.ROOM_TYPES.evacuation.zone.countdownTime
+    else
+        GameState.evacuationTimer = 0
+    end
+
+    -- 恢复房初始化
+    GameState.recoveryUsed = false
+
+    -- 非战斗房进入即生成门
+    if rtCfg.doorsOnEntry then
+        GameState.doors = GameState._GenerateDoors()
+    end
+
     GameState.state = "playing"
-    print("[GameState] Entered room depth=" .. GameState.depth .. ". State = playing")
+    print("[GameState] Room depth=" .. GameState.depth .. " type=" .. roomType)
 end
 
---- 生成门（四面墙随机位置）
+--- 根据当前房间类型随机生成门类型列表（仅战斗房需要随机）
+---@param count number
+---@return string[]
+function GameState._RollDoorTypes(count)
+    local roomType = GameState.currentRoomType
+
+    if roomType == "evacuation" then
+        -- 撤离房：仅 1 个 back 门
+        local types = {}
+        for i = 1, count do types[i] = "back" end
+        return types
+    end
+
+    if roomType == "recovery" then
+        -- 恢复房：全部 combat 门
+        local types = {}
+        for i = 1, count do types[i] = "combat" end
+        return types
+    end
+
+    -- 战斗房：第 1 个固定 combat，其余按概率随机
+    local types = { "combat" }
+    local gen = Config.DOOR_GENERATION
+    for i = 2, count do
+        local r = math.random()
+        if GameState.depth >= gen.evacuationMinDepth and r < gen.evacuationChance then
+            types[i] = "evacuation"
+        elseif r < gen.evacuationChance + gen.recoveryChance then
+            types[i] = "recovery"
+        else
+            types[i] = "combat"
+        end
+    end
+    return types
+end
+
+--- 生成门（四面墙随机位置，类型由房间规则决定）
 ---@return table[] doors
 function GameState._GenerateDoors()
     local doors = {}
-    local count = Config.DOOR.count
+    local rtCfg = Config.ROOM_TYPES[GameState.currentRoomType]
+    local count = rtCfg.doorCount
     local margin = 40  -- 距离墙角最小距离
     local W = Config.ROOM_WIDTH
     local H = Config.ROOM_HEIGHT
@@ -292,7 +465,10 @@ function GameState._GenerateDoors()
         walls[i], walls[j] = walls[j], walls[i]
     end
 
-    -- 在前 count 面墙上各放一扇门（简单方案：每面墙最多一扇）
+    -- 生成门类型列表
+    local doorTypes = GameState._RollDoorTypes(count)
+
+    -- 在前 count 面墙上各放一扇门
     for i = 1, math.min(count, #walls) do
         local w = walls[i]
         local pos = math.random(w.min, w.max)
@@ -306,8 +482,8 @@ function GameState._GenerateDoors()
             x = x,
             y = y,
             wall = w.wall,
-            rotation = math.random() * math.pi * 2,  -- 随机初始旋转
-            type = "combat",
+            rotation = math.random() * math.pi * 2,
+            type = doorTypes[i],
         })
     end
 
@@ -318,9 +494,13 @@ end
 -- DEBUG
 -- ============================================================================
 
---- DEBUG: 立即通关当前房间（杀死所有敌人 → 自然进入通关状态）
+--- DEBUG: 立即通关当前房间（仅战斗房有效）
 function GameState.DebugClearRoom()
     if GameState.state ~= "playing" then return end
+    if GameState.currentRoomType ~= "combat" then
+        print("[GameState] DEBUG: Can only clear combat rooms!")
+        return
+    end
     print("[GameState] DEBUG: Clearing room!")
 
     -- 杀死所有存活敌人（触发掉落经验球）
@@ -378,6 +558,97 @@ end
 function GameState.Restart()
     print("[GameState] Restarting game...")
     GameState.Init()
+end
+
+-- ============================================================================
+-- 宝箱系统
+-- ============================================================================
+
+--- 生成宝箱（随机位置 + 随机物品）
+function GameState._SpawnChest()
+    local cc = Config.CHEST
+    local margin = cc.MARGIN
+    local x = math.random(margin, Config.ROOM_WIDTH - margin)
+    local y = math.random(margin, Config.ROOM_HEIGHT - margin)
+
+    GameState.chest = {
+        x = x,
+        y = y,
+        alive = true,
+        locked = true,        -- 房间未通关时锁定
+        shakeTimer = 0,       -- 摇晃动画计时
+        shakeCooldown = 0,    -- 摇晃冷却计时
+    }
+
+    -- 创建宝箱背包并填入随机物品
+    GameState.chestInventory = Inventory.New(8, 3)
+    local totalProtos = #ItemDB.PROTOTYPES
+    for i = 1, cc.ITEM_COUNT do
+        local protoId = math.random(1, totalProtos)
+        local item = ItemDB.CreateItem(protoId)
+        if item then
+            GameState.chestInventory:AddItem(item)
+        end
+    end
+
+    GameState.chestInRange = false
+    print("[GameState] Chest spawned at (" .. x .. ", " .. y .. ") with " .. cc.ITEM_COUNT .. " items")
+end
+
+--- 每帧更新宝箱状态（距离检测、摇晃动画）
+---@param dt number
+function GameState.UpdateChest(dt)
+    local chest = GameState.chest
+    if not chest or not chest.alive then return end
+
+    local cc = Config.CHEST
+    local dist = Collision.Distance(Player.x, Player.y, chest.x, chest.y)
+    local inRange = dist < cc.DETECT_RADIUS
+
+    GameState.chestInRange = inRange
+
+    -- 更新摇晃计时器
+    if chest.shakeTimer > 0 then
+        chest.shakeTimer = chest.shakeTimer - dt
+        if chest.shakeTimer < 0 then chest.shakeTimer = 0 end
+    end
+
+    -- 更新冷却计时器
+    if chest.shakeCooldown > 0 then
+        chest.shakeCooldown = chest.shakeCooldown - dt
+        if chest.shakeCooldown < 0 then chest.shakeCooldown = 0 end
+    end
+
+    -- 锁定状态下，玩家进入范围触发摇晃
+    if chest.locked and inRange then
+        if chest.shakeTimer <= 0 and chest.shakeCooldown <= 0 then
+            chest.shakeTimer = cc.SHAKE_DURATION
+            chest.shakeCooldown = cc.SHAKE_COOLDOWN
+        end
+    end
+end
+
+--- 房间通关时解锁宝箱
+function GameState._UnlockChest()
+    if GameState.chest and GameState.chest.alive then
+        GameState.chest.locked = false
+        print("[GameState] Chest unlocked!")
+    end
+end
+
+--- 查询是否可以打开宝箱（房间通关 + 玩家在范围内 + 宝箱存活）
+---@return boolean
+function GameState.CanOpenChest()
+    local chest = GameState.chest
+    if not chest or not chest.alive then return false end
+    if chest.locked then return false end
+    return GameState.chestInRange
+end
+
+--- 获取宝箱背包数据（供 UI 使用）
+---@return InventoryData|nil
+function GameState.GetChestInventory()
+    return GameState.chestInventory
 end
 
 return GameState
