@@ -18,6 +18,7 @@ function Renderer.DrawAll(nvg, gameState)
     Renderer.DrawWarnings(nvg)
     Renderer.DrawXPGems(nvg, gameState and gameState.xpGems)
     Renderer.DrawEnemies(nvg)
+    Renderer.DrawEnemyBullets(nvg, gameState and gameState.enemyBullets)
     Renderer.DrawProjectiles(nvg)
     Renderer.DrawWeaponEffects(nvg)
     Renderer.DrawPlayer(nvg)
@@ -94,17 +95,45 @@ end
 function Renderer.DrawEnemies(nvg)
     for _, e in ipairs(EnemySpawner.enemies) do
         if e.alive then
+            -- 冲锋路径预警（蓄力阶段红色闪烁矩形）
+            if e.aiType == "mob_clash" and e.aiState == "windup" then
+                Renderer._DrawChargeWarning(nvg, e)
+            end
+
+            -- 根据 AI 类型绘制不同形状
+            local fillR, fillG, fillB, fillA
             if e.flashTimer > 0 then
-                -- 受伤闪白
-                nvgBeginPath(nvg)
-                nvgCircle(nvg, e.x, e.y, e.radius)
-                nvgFillColor(nvg, nvgRGBA(255, 255, 255, 220))
-                nvgFill(nvg)
+                fillR, fillG, fillB, fillA = 255, 255, 255, 220
             else
-                local c = e.color
+                fillR, fillG, fillB, fillA = e.color[1], e.color[2], e.color[3], e.color[4]
+            end
+
+            if e.aiType == "mob_shooter" then
+                Renderer._DrawTriangle(nvg, e.x, e.y, e.radius, e.facing, fillR, fillG, fillB, fillA)
+            elseif e.aiType == "mob_clash" then
+                Renderer._DrawSquare(nvg, e.x, e.y, e.radius, fillR, fillG, fillB, fillA)
+                -- 蓄力/冲锋中额外红色闪烁外框
+                if e.aiState == "windup" then
+                    local flash = math.sin(e.aiTimer * 16) * 0.5 + 0.5
+                    local s = e.radius
+                    nvgBeginPath(nvg)
+                    nvgRect(nvg, e.x - s, e.y - s, s * 2, s * 2)
+                    nvgStrokeColor(nvg, nvgRGBA(255, 50, 50, math.floor(flash * 200)))
+                    nvgStrokeWidth(nvg, 2.5)
+                    nvgStroke(nvg)
+                elseif e.aiState == "charging" then
+                    nvgBeginPath(nvg)
+                    local s = e.radius
+                    nvgRect(nvg, e.x - s, e.y - s, s * 2, s * 2)
+                    nvgStrokeColor(nvg, nvgRGBA(255, 100, 50, 180))
+                    nvgStrokeWidth(nvg, 2)
+                    nvgStroke(nvg)
+                end
+            else
+                -- mob_common: 圆形
                 nvgBeginPath(nvg)
                 nvgCircle(nvg, e.x, e.y, e.radius)
-                nvgFillColor(nvg, nvgRGBA(c[1], c[2], c[3], c[4]))
+                nvgFillColor(nvg, nvgRGBA(fillR, fillG, fillB, fillA))
                 nvgFill(nvg)
             end
 
@@ -124,6 +153,81 @@ function Renderer.DrawEnemies(nvg)
                 nvgFillColor(nvg, nvgRGBA(255, 60, 60, 220))
                 nvgFill(nvg)
             end
+        end
+    end
+end
+
+--- 绘制三角形（远程敌人，顶点朝向 facing 方向）
+function Renderer._DrawTriangle(nvg, cx, cy, r, facing, fr, fg, fb, fa)
+    local r1 = r * 1.3  -- 前顶点稍长
+    -- 三个顶点：前、左后、右后
+    local ax = cx + math.cos(facing) * r1
+    local ay = cy + math.sin(facing) * r1
+    local bAngle = facing + math.rad(135)
+    local bx = cx + math.cos(bAngle) * r
+    local by = cy + math.sin(bAngle) * r
+    local cAngle = facing - math.rad(135)
+    local px = cx + math.cos(cAngle) * r
+    local py = cy + math.sin(cAngle) * r
+    nvgBeginPath(nvg)
+    nvgMoveTo(nvg, ax, ay)
+    nvgLineTo(nvg, bx, by)
+    nvgLineTo(nvg, px, py)
+    nvgClosePath(nvg)
+    nvgFillColor(nvg, nvgRGBA(fr, fg, fb, fa))
+    nvgFill(nvg)
+end
+
+--- 绘制正方形（冲锋敌人）
+function Renderer._DrawSquare(nvg, cx, cy, r, fr, fg, fb, fa)
+    nvgBeginPath(nvg)
+    nvgRect(nvg, cx - r, cy - r, r * 2, r * 2)
+    nvgFillColor(nvg, nvgRGBA(fr, fg, fb, fa))
+    nvgFill(nvg)
+end
+
+--- 绘制冲锋路径预警（蓄力阶段，从敌人到目标的红色闪烁矩形）
+function Renderer._DrawChargeWarning(nvg, e)
+    local ai = Config.ENEMY_AI.mob_clash
+    local flash = math.sin(e.aiTimer * 16) * 0.5 + 0.5
+    local alpha = math.floor(flash * 80)
+    local halfW = ai.chargeWidth / 2
+
+    nvgSave(nvg)
+    nvgTranslate(nvg, e.x, e.y)
+    nvgRotate(nvg, math.atan(e.chargeDirY, e.chargeDirX))
+    -- 从敌人位置到冲锋目标的矩形
+    nvgBeginPath(nvg)
+    nvgRect(nvg, 0, -halfW, e.chargeDistTotal, halfW * 2)
+    nvgFillColor(nvg, nvgRGBA(255, 40, 40, alpha))
+    nvgFill(nvg)
+    -- 边框
+    nvgStrokeColor(nvg, nvgRGBA(255, 60, 60, alpha + 30))
+    nvgStrokeWidth(nvg, 1.5)
+    nvgStroke(nvg)
+    nvgRestore(nvg)
+end
+
+--- 绘制敌人子弹
+function Renderer.DrawEnemyBullets(nvg, bullets)
+    if not bullets then return end
+    for _, b in ipairs(bullets) do
+        if b.alive then
+            -- 红色小菱形
+            local s = b.radius + 1
+            nvgBeginPath(nvg)
+            nvgMoveTo(nvg, b.x, b.y - s)
+            nvgLineTo(nvg, b.x + s, b.y)
+            nvgLineTo(nvg, b.x, b.y + s)
+            nvgLineTo(nvg, b.x - s, b.y)
+            nvgClosePath(nvg)
+            nvgFillColor(nvg, nvgRGBA(255, 80, 60, 240))
+            nvgFill(nvg)
+            -- 外发光
+            nvgBeginPath(nvg)
+            nvgCircle(nvg, b.x, b.y, s + 2)
+            nvgFillColor(nvg, nvgRGBA(255, 60, 40, 60))
+            nvgFill(nvg)
         end
     end
 end

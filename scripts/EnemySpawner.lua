@@ -146,16 +146,22 @@ function EnemySpawner._CleanDead()
     EnemySpawner.enemies = alive
 end
 
---- 更新所有敌人的移动
+--- 更新所有敌人的移动和 AI
 ---@param dt number
 ---@param targetX number 玩家x
 ---@param targetY number 玩家y
+---@return table 敌人射击信息列表 {{x,y,vx,vy,damage,radius,lifetime}, ...}
 function EnemySpawner.UpdateEnemies(dt, targetX, targetY)
+    local shots = {}
     for _, e in ipairs(EnemySpawner.enemies) do
         if e.alive then
-            e:Update(dt, targetX, targetY)
+            local shot = e:Update(dt, targetX, targetY)
+            if shot then
+                table.insert(shots, shot)
+            end
         end
     end
+    return shots
 end
 
 --- 获取当前波次/总波次信息

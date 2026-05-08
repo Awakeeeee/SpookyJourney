@@ -20,19 +20,57 @@ Config.XP_PICKUP_RADIUS = 28
 Config.XP_GEM_RADIUS = 5
 Config.XP_TABLE = { 5, 10, 18, 28, 40, 55, 73, 95, 120, 150 }
 
+-- 敌人 AI 类型
+-- mob_common: 靠近玩家后围绕玩家攻击（圆形）
+-- mob_shooter: 保持距离发射子弹（三角形）
+-- mob_clash: 蓄力后冲锋（正方形）
+Config.ENEMY_AI = {
+    mob_common = {
+        stopRadius = 28,        -- 停止接近的距离（玩家半径+此值≈围绕距离）
+        attackInterval = 0.8,   -- 碰撞攻击间隔
+    },
+    mob_shooter = {
+        preferDist = 150,       -- 理想射击距离
+        minDist = 100,          -- 太近会后退
+        fireInterval = 1.6,     -- 射击间隔
+        bulletSpeed = 200,      -- 子弹速度
+        bulletRadius = 4,       -- 子弹碰撞半径
+        bulletLifetime = 2.5,   -- 子弹存活时间
+    },
+    mob_clash = {
+        preferDist = 120,       -- 蓄力距离
+        chargeDelay = 0.8,      -- 蓄力时间（红色闪烁）
+        chargeSpeed = 400,      -- 冲锋速度
+        chargeWidth = 24,       -- 冲锋路径宽度（用于预警渲染）
+    },
+}
+
 -- 敌人类型
 Config.ENEMY_TYPES = {
     bat = {
+        aiType = "mob_common",
         speed = 70, hp = 3, radius = 10, damage = 8,
         color = { 160, 80, 200, 255 }, xp = 1,
     },
     slime = {
+        aiType = "mob_common",
         speed = 40, hp = 8, radius = 14, damage = 12,
         color = { 80, 200, 80, 255 }, xp = 2,
     },
     skull = {
+        aiType = "mob_common",
         speed = 55, hp = 15, radius = 12, damage = 18,
         color = { 220, 220, 220, 255 }, xp = 3,
+    },
+    archer = {
+        aiType = "mob_shooter",
+        speed = 45, hp = 6, radius = 11, damage = 10,
+        color = { 220, 160, 50, 255 }, xp = 2,
+    },
+    brute = {
+        aiType = "mob_clash",
+        speed = 35, hp = 20, radius = 14, damage = 25,
+        color = { 200, 60, 60, 255 }, xp = 3,
     },
 }
 
@@ -43,19 +81,19 @@ Config.WAVES = {
         spawnInterval = 0.3,
     },
     {
-        enemies = { { type = "bat", count = 4 }, { type = "slime", count = 3 } },
+        enemies = { { type = "bat", count = 3 }, { type = "archer", count = 2 } },
         spawnInterval = 0.3,
     },
     {
-        enemies = { { type = "slime", count = 5 }, { type = "bat", count = 5 } },
+        enemies = { { type = "slime", count = 4 }, { type = "archer", count = 2 }, { type = "brute", count = 1 } },
         spawnInterval = 0.25,
     },
     {
-        enemies = { { type = "skull", count = 3 }, { type = "slime", count = 4 } },
+        enemies = { { type = "skull", count = 3 }, { type = "archer", count = 3 }, { type = "brute", count = 2 } },
         spawnInterval = 0.25,
     },
     {
-        enemies = { { type = "skull", count = 5 }, { type = "bat", count = 6 }, { type = "slime", count = 4 } },
+        enemies = { { type = "skull", count = 4 }, { type = "bat", count = 4 }, { type = "archer", count = 3 }, { type = "brute", count = 2 } },
         spawnInterval = 0.2,
     },
 }
