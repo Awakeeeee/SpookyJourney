@@ -107,8 +107,8 @@ Config.WAVE_INTERVAL = 2.0       -- 波次间等待时间（秒）
 Config.WEAPONS = {
     sword = {
         cooldown = 1.0, damage = 12,
-        slashLength = 55,    -- 长条攻击长度（从玩家向外延伸）
-        slashWidth = 24,     -- 长条攻击宽度
+        slashLength = 80,    -- 长条攻击长度（从玩家向外延伸）
+        slashWidth = 14,     -- 长条攻击宽度
         detectRange = 70,    -- 索敌范围
         sweepDuration = 0.2, -- 特效持续时间
     },
@@ -139,7 +139,7 @@ Config.CHEST = {
     RADIUS = 16,              -- 箱体视觉半径
     DETECT_RADIUS = 50,       -- 玩家检测范围
     MARGIN = 60,              -- 距墙最小距离（生成位置）
-    ITEM_COUNT = 5,           -- 随机生成物品数
+    ITEM_COUNT = 3,           -- 宝箱实际产出物品数（从候选池按权重随机选出）
     -- 视觉颜色
     BODY_COLOR  = { 180, 130, 50, 255 },
     LID_COLOR   = { 200, 150, 60, 255 },
@@ -204,6 +204,26 @@ Config.DOOR_GENERATION = {
     recoveryChance = 0.25,          -- 恢复房门概率
     evacuationMinDepth = 5,         -- 撤离门最低层数
     evacuationChance = 0.15,        -- 撤离房门概率
+}
+
+-- ============================================================================
+-- 物品产出系统
+-- ============================================================================
+
+-- 各品质的产出权重（品质1=白 ~ 6=红）
+-- 此处的比例直接反映物品最终从宝箱产出的相对概率
+Config.QUALITY_WEIGHTS = { 100, 50, 20, 8, 3, 1 }
+--                          白   绿   蓝   紫  橙  红
+
+-- 按战斗难度层数（combatDepth）解锁的最高产出品质
+-- 每行：{ minDepth, maxQuality }，按 minDepth 升序排列
+-- combatDepth 达到 minDepth 时，品质上限解锁到 maxQuality
+Config.DEPTH_QUALITY_CAP = {
+    { minDepth = 0,  maxQuality = 2 },  -- 默认：绿色及以下
+    { minDepth = 3,  maxQuality = 3 },  -- 3层后：蓝色解锁
+    { minDepth = 5,  maxQuality = 4 },  -- 5层后：紫色解锁
+    { minDepth = 8,  maxQuality = 5 },  -- 8层后：橙色解锁
+    { minDepth = 12, maxQuality = 6 },  -- 12层后：红色解锁
 }
 
 -- 房间过渡

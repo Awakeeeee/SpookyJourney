@@ -82,6 +82,65 @@ function ItemDB.GetQualityInfo(quality)
     return ItemDB.QUALITIES[quality]
 end
 
+-- ============================================================================
+-- 产出工具函数
+-- ============================================================================
+
+--- 返回品质 <= maxQuality 的所有原型列表
+---@param maxQuality number 品质上限（含）
+---@return table[] protos
+function ItemDB.GetByMaxQuality(maxQuality)
+    local result = {}
+    for _, proto in ipairs(ItemDB.PROTOTYPES) do
+        if proto.quality <= maxQuality then
+            result[#result + 1] = proto
+        end
+    end
+    return result
+end
+
+--- 从 proto 列表中按品质权重做加权随机，无放回地抽取 count 个
+--- weights：table<number, number>，key 为品质等级，value 为权重
+---@param pool table[]  原型列表（每个元素有 .quality 字段）
+---@param count number   抽取数量（自动 clamp 到 pool 大小）
+---@param weights table  品质→权重映射
+---@return table[] selected 抽中的原型列表
+function ItemDB.WeightedSample(pool, count, weights)
+    -- 复制一份，避免修改原始列表
+    local remaining = {}
+    for i, p in ipairs(pool) do
+        remaining[i] = p
+    end
+
+    local n = math.min(count, #remaining)
+    local result = {}
+
+    for _ = 1, n do
+        -- 计算当前 remaining 的总权重
+        local totalW = 0
+        for _, p in ipairs(remaining) do
+            totalW = totalW + (weights[p.quality] or 1)
+        end
+
+        -- 按权重随机选一个
+        local r = math.random() * totalW
+        local cumW = 0
+        local chosen = 1
+        for i, p in ipairs(remaining) do
+            cumW = cumW + (weights[p.quality] or 1)
+            if r <= cumW then
+                chosen = i
+                break
+            end
+        end
+
+        result[#result + 1] = remaining[chosen]
+        table.remove(remaining, chosen)
+    end
+
+    return result
+end
+
 -- 自增实例 ID
 local nextInstanceId = 1
 

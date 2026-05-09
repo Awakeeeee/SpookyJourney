@@ -14,6 +14,10 @@ function GameCanvas:Init(props)
     props.backgroundColor = { Config.BG_COLOR[1], Config.BG_COLOR[2], Config.BG_COLOR[3], 255 }
     UI.Widget.Init(self, props)
     self.gameState_ = nil
+    -- 当前帧的渲染变换（Render 时记录，供坐标转换使用）
+    self.txOffsetX_ = 0
+    self.txOffsetY_ = 0
+    self.txScale_   = 1
 end
 
 --- 设置 GameState 引用，供 Render 时读取数据
@@ -37,6 +41,11 @@ function GameCanvas:Render(nvg)
     local offsetX = l.x + (l.w - Config.ROOM_WIDTH * scale) / 2
     local offsetY = l.y + (l.h - Config.ROOM_HEIGHT * scale) / 2
 
+    -- 记录变换参数（供 ScreenToGame 使用）
+    self.txOffsetX_ = offsetX
+    self.txOffsetY_ = offsetY
+    self.txScale_   = scale
+
     nvgSave(nvg)
     -- 裁剪到 widget 区域
     nvgScissor(nvg, l.x, l.y, l.w, l.h)
@@ -52,6 +61,17 @@ function GameCanvas:Render(nvg)
 
     -- HUD 层：撤离倒计时（屏幕坐标）
     Renderer.DrawEvacuationCountdown(nvg, self.gameState_, l.w)
+end
+
+--- 将屏幕坐标转换为游戏世界坐标
+---@param screenX number
+---@param screenY number
+---@return number gameX, number gameY
+function GameCanvas:ScreenToGame(screenX, screenY)
+    local scale = self.txScale_
+    if scale <= 0 then return 0, 0 end
+    return (screenX - self.txOffsetX_) / scale,
+           (screenY - self.txOffsetY_) / scale
 end
 
 return GameCanvas

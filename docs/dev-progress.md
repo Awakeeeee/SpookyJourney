@@ -14,7 +14,7 @@ scripts/
 ├── main.lua          # 入口，UI 树组装，HandleUpdate 状态分发
 ├── Config.lua        # 全局配置（房间尺寸、武器参数、敌人AI、房间类型等）
 ├── GameState.lua     # 状态机核心（playing/levelup/room_clear/transition/gameover/victory）
-├── GameCanvas.lua    # NanoVG 渲染 Widget，世界坐标变换
+├── GameCanvas.lua    # NanoVG 渲染 Widget，世界坐标变换，ScreenToGame 坐标转换
 ├── Renderer.lua      # 所有 NanoVG 绘制函数（背景/玩家/敌人/门/区域/粒子/宝箱等）
 ├── HUD.lua           # 顶部 HUD（HP条、等级、层数、击杀数）
 ├── Player.lua        # 玩家状态（移动、HP、经验、升级）
@@ -26,7 +26,8 @@ scripts/
 ├── LevelUpUI.lua     # 升级选择弹窗
 ├── ItemDB.lua        # 物品原型数据库（18种物品×6品质）
 ├── Inventory.lua     # 背包数据逻辑（增删查改/拖拽/拆分合并）
-└── InventoryUI.lua   # 背包全屏 UI（网格+拖拽+品质边框）
+├── InventoryUI.lua   # 背包全屏 UI（网格+拖拽+品质边框）
+└── DoorPreviewUI.lua # 门预览弹窗（点击战斗门显示宝箱候选道具）
 ```
 
 ## 已完成功能
@@ -63,6 +64,17 @@ scripts/
 - [x] 宝箱背包：随机物品，可拖拽到玩家背包
 - [x] 玩家背包 UI：全屏覆盖，网格布局，品质边框
 
+### 物品产出系统（2026-05-09）
+- [x] **品质权重配置**：`Config.QUALITY_WEIGHTS`，白=100/绿=50/蓝=20/紫=8/橙=3/红=1，直接反映最终产出概率
+- [x] **深度品质上限**：`Config.DEPTH_QUALITY_CAP`，按 `combatDepth` 解锁更高品质（3层蓝/5层紫/8层橙/12层红）
+- [x] **combatDepth 独立计数**：仅进入战斗房时 +1，恢复房/撤离房不累计难度
+- [x] **单阶段加权随机**：从品质上限内的物品池做一次加权抽取，产出3件，权重即最终概率
+- [x] **门预览 UI**：点击战斗房门口弹出「有可能摸出以下物品」面板
+  - 预览池生成规则：最高品质1件，每低一档2件，总数上限6件，各档内随机选取
+  - 预览池在生成门时预算（使用目标房 combatDepth+1 的品质上限）
+  - `DoorPreviewUI.lua` 自定义 NanoVG PreviewSlot Widget，与背包格子品质色系一致
+  - 点遮罩或关闭按钮可关闭；`playing`（恢复/撤离房）和 `room_clear`（战斗房通关后）状态均可触发
+
 ## 关键设计决策
 
 1. **"回到上一个房间" 简化为 back 门进新战斗房不加 depth**，避免保存/恢复复杂房间状态
@@ -92,6 +104,8 @@ scripts/
 | 武器参数 | `Config.WEAPONS` | knife/sword/wand 各自参数 |
 | 敌人AI | `Config.ENEMY_AI` | mob_common/mob_shooter/mob_clash |
 | 波次 | `Config.WAVES` | 5波配置 |
+| 品质权重 | `Config.QUALITY_WEIGHTS` | 白100/绿50/蓝20/紫8/橙3/红1 |
+| 品质上限 | `Config.DEPTH_QUALITY_CAP` | combatDepth 阈值→maxQuality |
 
 ---
-*最后更新：2026-05-08*
+*最后更新：2026-05-09*

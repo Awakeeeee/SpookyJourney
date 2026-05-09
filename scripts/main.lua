@@ -6,6 +6,7 @@
 local UI = require("urhox-libs/UI")
 require "urhox-libs.UI.VirtualControls"
 
+local Config = require("Config")
 local GameState = require("GameState")
 local GameCanvas = require("GameCanvas")
 local HUD = require("HUD")
@@ -14,6 +15,7 @@ local Particle = require("Particle")
 local ItemDB = require("ItemDB")
 local Inventory = require("Inventory")
 local InventoryUI = require("InventoryUI")
+local DoorPreviewUI = require("DoorPreviewUI")
 
 ---@type any
 local joystick_ = nil
@@ -33,6 +35,8 @@ local openChestBtn_ = nil
 local playerBag_ = nil
 ---@type table
 local inventoryUI_ = nil
+---@type table
+local doorPreviewUI_ = nil
 local statusShown_ = false
 
 -- ============================================================================
@@ -79,6 +83,29 @@ function Start()
     }
     gameCanvas_:SetGameState(GameState)
 
+    -- 通过 UI 指针事件检测门口点击（不受 VirtualControls 干扰）
+    -- room_clear：战斗房通关后；playing：恢复/撤离房进入即有门
+    gameCanvas_.OnPointerDown = function(self, event)
+        local st = GameState.state
+        if st ~= "room_clear" and st ~= "playing" then return end
+        if DoorPreviewUI.IsOpen(doorPreviewUI_) then return end
+
+        local sx, sy = event.x, event.y
+        local gx, gy = gameCanvas_:ScreenToGame(sx, sy)
+        local tapR = Config.DOOR.triggerRadius * 2.0
+        print(string.format("[DoorPreview] tap game=(%.0f,%.0f) doors=%d", gx, gy, #(GameState.doors or {})))
+        for _, door in ipairs(GameState.doors or {}) do
+            if door.previewPool then
+                local dx, dy = gx - door.x, gy - door.y
+                if (dx * dx + dy * dy) < (tapR * tapR) then
+                    print(string.format("[DoorPreview] hit door type=%s", door.type))
+                    DoorPreviewUI.Show(doorPreviewUI_, door.previewPool)
+                    return
+                end
+            end
+        end
+    end
+
     -- 创建 HUD
     hud_ = HUD.Create()
 
@@ -105,15 +132,10 @@ function Start()
 
     -- 初始化背包系统
     playerBag_ = Inventory.New(8, 3)
-    -- 放入测试物品（每品质各一个）
-    local testProtoIds = { 1, 4, 7, 10, 13, 16 }
-    for _, pid in ipairs(testProtoIds) do
-        local item = ItemDB.CreateItem(pid)
-        if item then
-            playerBag_:AddItem(item)
-        end
-    end
     inventoryUI_ = InventoryUI.Create(playerBag_)
+
+    -- 初始化门预览 UI
+    doorPreviewUI_ = DoorPreviewUI.Create()
 
     -- 背包按钮（左下角）
     bagBtn_ = UI.Button {
@@ -145,7 +167,9 @@ function Start()
         onClick = function()
             local chestInv = GameState.GetChestInventory()
             if chestInv and not InventoryUI.IsOpen(inventoryUI_) then
-                InventoryUI.OpenChest(inventoryUI_, chestInv)
+                -- 传入宝箱实例的 scanState，用于持久化各格扫描进度
+                local scanState = GameState.chest and GameState.chest.scanState or nil
+                InventoryUI.OpenChest(inventoryUI_, chestInv, scanState)
             end
         end,
     }
@@ -180,6 +204,8 @@ function Start()
             },
             -- 背包 Overlay（全屏覆盖，初始隐藏）
             InventoryUI.GetOverlay(inventoryUI_),
+            -- 门预览 Overlay（全屏覆盖，初始隐藏）
+            DoorPreviewUI.GetOverlay(doorPreviewUI_),
         }
     }
     UI.SetRoot(root)
@@ -204,8 +230,14 @@ end
 function HandleUpdate(eventType, eventData)
     local dt = eventData["TimeStep"]:GetFloat()
 
-    -- 背包打开时暂停游戏逻辑
+    -- 背包打开时暂停游戏逻辑（但仍推进宝箱扫描动画）
     if InventoryUI.IsOpen(inventoryUI_) then
+        InventoryUI.UpdateChestScan(inventoryUI_, dt)
+        return
+    end
+
+    -- 门预览弹窗打开时，暂停其他逻辑
+    if DoorPreviewUI.IsOpen(doorPreviewUI_) then
         return
     end
 
@@ -233,6 +265,7 @@ function HandleUpdate(eventType, eventData)
 
     elseif state == "room_clear" then
         -- 房间已通关，玩家可移动选门
+        -- 门口点击检测由 gameCanvas_.OnPointerDown 处理
         GameState.Update(dt, inputX, inputY)
 
     elseif state == "transition" then

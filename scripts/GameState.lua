@@ -15,10 +15,62 @@ local ItemDB = require("ItemDB")
 
 local GameState = {}
 
+--- 根据 combatDepth 查品质上限
+---@param combatDepth number
+---@return number maxQuality
+function GameState.GetQualityCap(combatDepth)
+    local cap = 1
+    for _, entry in ipairs(Config.DEPTH_QUALITY_CAP) do
+        if combatDepth >= entry.minDepth then
+            cap = entry.maxQuality
+        end
+    end
+    return cap
+end
+
+--- 生成宝箱的预览展示池
+--- 规则：最高品质取1件，之后每个低品质取2件，每品质内随机选取
+---@param maxQuality number 品质上限
+---@return table[] previewProtos 原型列表（仅用于展示）
+function GameState.BuildChestPreviewPool(maxQuality)
+    -- 按品质从高到低构建分层列表
+    local byQuality = {}
+    for q = maxQuality, 1, -1 do
+        local items = {}
+        for _, proto in ipairs(ItemDB.PROTOTYPES) do
+            if proto.quality == q then
+                items[#items + 1] = proto
+            end
+        end
+        if #items > 0 then
+            byQuality[#byQuality + 1] = { quality = q, items = items }
+        end
+    end
+
+    local MAX_PREVIEW = 6
+    local result = {}
+    for i, tier in ipairs(byQuality) do
+        if #result >= MAX_PREVIEW then break end
+        local quota = (i == 1) and 1 or 2  -- 最高品质1件，其余2件
+        -- 从该品质中随机选 min(quota, 实际数量, 剩余配额) 件
+        local pool = {}
+        for _, p in ipairs(tier.items) do pool[#pool + 1] = p end
+        local take = math.min(quota, #pool, MAX_PREVIEW - #result)
+        for _ = 1, take do
+            local idx = math.random(1, #pool)
+            result[#result + 1] = pool[idx]
+            table.remove(pool, idx)
+        end
+    end
+
+    return result
+end
+
 --- 初始化/重置游戏（完全重置，包括 depth）
 function GameState.Init()
     GameState.state = "playing"  -- playing / levelup / room_clear / transition / gameover / victory
-    GameState.depth = 1          -- 当前房间层数
+    GameState.depth = 1          -- 当前房间层数（含非战斗房）
+    GameState.combatDepth = 0    -- 已通过的战斗房数（决定品质上限）
     GameState.xpGems = {}
     GameState.enemyBullets = {}
     GameState.doors = {}         -- 通关后出现的门列表
@@ -354,6 +406,11 @@ function GameState._EnterNextRoom()
         GameState.depth = GameState.depth + 1
     end
 
+    -- combatDepth：仅进入战斗房时 +1（非战斗房不算难度层数）
+    if roomType == "combat" then
+        GameState.combatDepth = GameState.combatDepth + 1
+    end
+
     -- 通用重置
     GameState.currentRoomType = roomType
     GameState.selectedDoorType = nil
@@ -478,12 +535,23 @@ function GameState._GenerateDoors()
         else
             x, y = w.fixed, pos
         end
+        local doorType = doorTypes[i]
+        -- 战斗房门：预生成目标宝箱的预览展示池（供玩家点击门查看）
+        local previewPool = nil
+        if doorType == "combat" then
+            -- 目标房是战斗房，combatDepth+1 后的品质上限
+            local nextCombatDepth = GameState.combatDepth + 1
+            local maxQ = GameState.GetQualityCap(nextCombatDepth)
+            previewPool = GameState.BuildChestPreviewPool(maxQ)
+        end
+
         table.insert(doors, {
             x = x,
             y = y,
             wall = w.wall,
             rotation = math.random() * math.pi * 2,
-            type = doorTypes[i],
+            type = doorType,
+            previewPool = previewPool,  -- 仅战斗房门有此字段
         })
     end
 
@@ -578,21 +646,38 @@ function GameState._SpawnChest()
         locked = true,        -- 房间未通关时锁定
         shakeTimer = 0,       -- 摇晃动画计时
         shakeCooldown = 0,    -- 摇晃冷却计时
+        -- 搜索扫描状态：key=slotIndex, value={revealed=bool, progress=0~1}
+        -- revealed=true 持久保留；progress 在关闭宝箱时若未完成则重置为 0
+        scanState = {},
     }
 
-    -- 创建宝箱背包并填入随机物品
+    -- 根据当前 combatDepth 确定品质上限，从候选池按权重随机产出道具
+    local maxQuality = GameState.GetQualityCap(GameState.combatDepth)
+    local candidatePool = ItemDB.GetByMaxQuality(maxQuality)
+    local selected = ItemDB.WeightedSample(candidatePool, cc.ITEM_COUNT, Config.QUALITY_WEIGHTS)
+
     GameState.chestInventory = Inventory.New(8, 3)
-    local totalProtos = #ItemDB.PROTOTYPES
-    for i = 1, cc.ITEM_COUNT do
-        local protoId = math.random(1, totalProtos)
-        local item = ItemDB.CreateItem(protoId)
+    for _, proto in ipairs(selected) do
+        local item = ItemDB.CreateItem(proto.id)
         if item then
             GameState.chestInventory:AddItem(item)
         end
     end
 
+    -- 在宝箱生成时一次性初始化所有初始物品的扫描状态
+    -- 之后 scanState[i]==nil 永远只意味着"玩家后来放入的道具"
+    local scanState = GameState.chest.scanState
+    for i = 1, GameState.chestInventory:GetSize() do
+        if GameState.chestInventory:GetItem(i) then
+            scanState[i] = { revealed = false, progress = 0 }
+        end
+    end
+
     GameState.chestInRange = false
-    print("[GameState] Chest spawned at (" .. x .. ", " .. y .. ") with " .. cc.ITEM_COUNT .. " items")
+
+    local qualityName = ItemDB.QUALITIES[maxQuality] and ItemDB.QUALITIES[maxQuality].name or "?"
+    print(string.format("[GameState] Chest spawned at (%d, %d) | combatDepth=%d maxQuality=%s(%d) | items=%d",
+        x, y, GameState.combatDepth, qualityName, maxQuality, #selected))
 end
 
 --- 每帧更新宝箱状态（距离检测、摇晃动画）
@@ -649,6 +734,18 @@ end
 ---@return InventoryData|nil
 function GameState.GetChestInventory()
     return GameState.chestInventory
+end
+
+--- 关闭宝箱时重置未完成格子的扫描进度
+--- revealed=true 的格子保持不变；progress < 1 的格子归零
+function GameState.ResetChestScanProgress()
+    local chest = GameState.chest
+    if not chest or not chest.scanState then return end
+    for slotIndex, s in pairs(chest.scanState) do
+        if not s.revealed then
+            s.progress = 0
+        end
+    end
 end
 
 return GameState
